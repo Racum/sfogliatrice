@@ -1,0 +1,10 @@
+[workspace]
+members = ["sfogliatrice_lib", "sfogliatrice"]
+resolver = "2"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
