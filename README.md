@@ -1,6 +1,6 @@
 # Sfogliatrice – Geometry Tessellation Tool
 
-<img src="assets/sfogliatrice.png" width="300">
+<img src="https://raw.githubusercontent.com/Racum/sfogliatrice/main/assets/sfogliatrice.png" width="300">
 
 *"Sfogliatrice" = "Mechanized Pasta Cutter"*
 
@@ -47,7 +47,7 @@ Options:
 
 For the following examples, consider this polygon over the Gran Canaria island:
 
-<img src="assets/gran_canaria_input.png" width="400">
+<img src="https://raw.githubusercontent.com/Racum/sfogliatrice/main/assets/gran_canaria_input.png" width="400">
 
 ### Targets
 
@@ -57,7 +57,7 @@ Targets are the result of tessellation, meaning the points and lines that would 
 $ sfogliatrice fixtures/gran_canaria.geojson
 ```
 
-<img src="assets/gran_canaria_targets.png" width="400">
+<img src="https://raw.githubusercontent.com/Racum/sfogliatrice/main/assets/gran_canaria_targets.png" width="400">
 
 ### Coverages
 
@@ -69,7 +69,7 @@ To return the coverages in _addition to the targets_ (in the same GeoJSON struct
 $ sfogliatrice -n -c fixtures/gran_canaria.geojson
 ```
 
-<img src="assets/gran_canaria_coverages.png" width="400">
+<img src="https://raw.githubusercontent.com/Racum/sfogliatrice/main/assets/gran_canaria_coverages.png" width="400">
 
 
 ### Intermediates
@@ -84,7 +84,7 @@ To return the intermediates, use the option `-i` / `--intermediates`.
 $ sfogliatrice -n -i fixtures/gran_canaria.geojson
 ```
 
-<img src="assets/gran_canaria_intermediates.png" width="400">
+<img src="https://raw.githubusercontent.com/Racum/sfogliatrice/main/assets/gran_canaria_intermediates.png" width="400">
 
 ### Compatibility Options
 
