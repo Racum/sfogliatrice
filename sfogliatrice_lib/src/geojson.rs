@@ -2,8 +2,6 @@ use geo::Geometry;
 use geojson::GeoJson;
 use serde_json::{Value, json};
 
-use sfogliatrice_lib::types::{Config, TessellationResult};
-
 /// Maximum nesting depth for GeoJSON container recursion (Feature, FeatureCollection, GeometryCollection).
 /// Inputs nested deeper than this have their excess levels silently dropped.
 const MAX_GEOJSON_DEPTH: usize = 4;
@@ -134,12 +132,6 @@ pub fn geometry_to_json(geometry: &Geometry) -> Value {
     serde_json::to_value(gj_geom).expect("Failed to serialize GeoJSON geometry")
 }
 
-/// Parses a GeoJSON Value and tessellates the contained geometries.
-pub fn tessellate_geojson(geojson: &Value, config: &Config) -> TessellationResult {
-    let geometries = iterate_geometry_from_geojson(geojson);
-    sfogliatrice_lib::tessellate(&geometries, config)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,8 +220,6 @@ mod tests {
 
     #[test]
     fn test_iterate_geojson_depth_cap_drops_deep_nesting() {
-        // Build Feature → GC → GC → GC → GC → Point. The innermost GC is entered at depth=4,
-        // which is `>= MAX_GEOJSON_DEPTH` and is dropped.
         let point = json!({ "type": "Point", "coordinates": [0., 0.] });
         let gc4 = json!({ "type": "GeometryCollection", "geometries": [point] });
         let gc3 = json!({ "type": "GeometryCollection", "geometries": [gc4] });
@@ -241,8 +231,6 @@ mod tests {
 
     #[test]
     fn test_iterate_geojson_shallow_nesting_preserved() {
-        // Feature → GC → GC → GC → Point. Point is reached at depth=4 which is a terminal type;
-        // depth cap only rejects containers at depth >= 4, so this chain survives and yields 1 Point.
         let point = json!({ "type": "Point", "coordinates": [0., 0.] });
         let gc3 = json!({ "type": "GeometryCollection", "geometries": [point] });
         let gc2 = json!({ "type": "GeometryCollection", "geometries": [gc3] });
@@ -314,25 +302,5 @@ mod tests {
         assert_eq!(f["type"], "Feature");
         assert_eq!(f["geometry"], geom);
         assert!(f["properties"].is_object());
-    }
-
-    #[test]
-    fn test_tessellate_geojson_feature_input() {
-        let feat = json!({
-            "type": "Feature",
-            "properties": {},
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[
-                    [13.332607, 52.520232],
-                    [13.378726, 52.520232],
-                    [13.378726, 52.504324],
-                    [13.332607, 52.504324],
-                    [13.332607, 52.520232],
-                ]],
-            },
-        });
-        let result = tessellate_geojson(&feat, &Config::default());
-        assert!(!result.targets.is_empty(), "Feature-wrapped polygon should tessellate");
     }
 }

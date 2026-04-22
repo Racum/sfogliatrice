@@ -3,6 +3,8 @@ use geo::{
     BoundingRect, Buffer, Coord, Euclidean, Geometry, Length, Line, LineString, Point, Polygon, Rect, Simplify, coord,
 };
 
+use serde_json::Value;
+
 use crate::defaults::ROUND_ANGLE;
 use crate::geo_utils::{
     coerce_to_polygon, count_lines, distribute_points, ensure_line_length, intersect_line, is_too_small,
@@ -224,6 +226,12 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationResul
         coverages,
         intermediates,
     }
+}
+
+/// Parses a GeoJSON Value and tessellates the contained geometries.
+pub fn tessellate_geojson(geojson: &Value, config: &Config) -> TessellationResult {
+    let geometries = crate::geojson::iterate_geometry_from_geojson(geojson);
+    tessellate(&geometries, config)
 }
 
 #[cfg(test)]
@@ -486,5 +494,25 @@ mod tests {
         });
         let result = tessellate(&geojson_to_geometries(&polygon), &Config::default());
         assert_eq!(result.targets.len(), 2, "Expected exactly 2 targets for this polygon");
+    }
+
+    #[test]
+    fn test_tessellate_geojson_feature_input() {
+        let feat = json!({
+            "type": "Feature",
+            "properties": {},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [13.332607, 52.520232],
+                    [13.378726, 52.520232],
+                    [13.378726, 52.504324],
+                    [13.332607, 52.504324],
+                    [13.332607, 52.520232],
+                ]],
+            },
+        });
+        let result = tessellate_geojson(&feat, &Config::default());
+        assert!(!result.targets.is_empty(), "Feature-wrapped polygon should tessellate");
     }
 }

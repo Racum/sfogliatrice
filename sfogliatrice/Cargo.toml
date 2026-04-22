@@ -1,6 +1,6 @@
 [package]
 name = "sfogliatrice"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["Ronaldo Racum <ronaldo@racum.com>"]
 license = "MIT"
@@ -19,8 +19,7 @@ path = "src/main.rs"
 serde_json = "1"
 
 [dependencies]
-sfogliatrice_lib = { path = "../sfogliatrice_lib", version = "0.1.1" }
+sfogliatrice_lib = { path = "../sfogliatrice_lib", version = "0.2.0" }
 clap = { version = "4", features = ["derive"] }
 geo = "0.33.0"
 serde_json = "1"
-geojson = { version = "1.0.0", features = ["geo-types"] }

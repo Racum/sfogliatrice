@@ -837,18 +837,17 @@ dependencies = [
 
 [[package]]
 name = "sfogliatrice"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "clap",
  "geo",
- "geojson",
  "serde_json",
  "sfogliatrice_lib",
 ]
 
 [[package]]
 name = "sfogliatrice_lib"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "geo",
  "geo-omerc",

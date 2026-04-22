@@ -1,12 +1,11 @@
-mod geojson;
-
 use clap::Parser;
 use geo::Geometry;
-use geojson::{combine_geojson, coord_precision, feature, geometry_to_json, tessellate_geojson};
 use serde_json::{Value, json};
 use sfogliatrice_lib::defaults::{
     DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_STRIP_WIDTH, DEFAULT_TARGET_EXPANSION,
 };
+use sfogliatrice_lib::geojson::{combine_geojson, coord_precision, feature, geometry_to_json};
+use sfogliatrice_lib::tessellate_geojson;
 use sfogliatrice_lib::types::{Config, Target}; // ConfigError via Display on Config::new
 use std::fs;
 use std::io::{self, Read, Write};

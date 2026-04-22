@@ -135,6 +135,8 @@ $ cargo add sfogliatrice_lib
 
 ### Usage
 
+From `geo` geometry:
+
 ```rust
 use geo::{Geometry, polygon};
 use sfogliatrice_lib::{Config, tessellate};
@@ -159,6 +161,36 @@ fn main() {
 }
 ```
 
+From Serde GeoJSON:
+
+```rust
+use serde_json::json;
+use sfogliatrice_lib::{Config, tessellate_geojson};
+
+fn main() {
+    // Get your GeoJSON ready:
+    let geojson = json!({
+        "type": "Polygon",
+        "coordinates": [[
+            [-15.332574, 28.217488],
+            [-15.865546, 28.217488],
+            [-15.865546, 27.719770],
+            [-15.332574, 27.719770],
+            [-15.332574, 28.217488]
+        ]]
+    });
+
+    // Set your tessellation options:
+    let config = Config { strip_width: 10_000.0, ..Config::default() };
+
+    // Run tessellation:
+    let result = tessellate_geojson(&geojson, &config);
+
+    // Use the results:
+    println!("Targets: {}", result.targets.len());  // Outputs: Targets: 10
+}
+```
+
 The CLI parameters actually just follow the library’s Config parameters; check the notes on the CLI usage and you’ll know how to set this:
 
 ```rust
@@ -173,7 +205,7 @@ pub struct Config {
     pub inflation: f64,
     pub force_line_targets: bool,
     pub force_square_coverages: bool,
-    pub heading: Option<f64>,  // None = auto-detect, Some(degrees) = fixed orientation
+    pub heading: Option<f64>,
 }
 ```
 
