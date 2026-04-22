@@ -41,6 +41,7 @@ Options:
   -p, --pretty                     Pretty-print JSON output
       --line-targets               Force all targets as lines (no points)
       --square-coverages           Show point coverages as squares
+      --heading <HEADING>          Target heading angle in degrees (0.0 means north to south)
   -v, --version                    Print version information
   -h, --help                       Print help
 ```
@@ -108,6 +109,19 @@ If you are integrating with a system that expects **only** LineStrings (no Point
 
 If you prefer to see the coverages as squares, even coming from points, use the option `--square-coverages`. Please notice that you also need to use `-c` / `--coverages` to see the effect of this option, given it doesn’t affect the tessellation itself.
 
+#### Custom Heading
+
+By default, the tool automatically finds the optimal strip orientation for each polygon using its minimum rotated bounding rectangle. If you need strips to run in a specific direction use `--heading` to fix the orientation.
+
+The angle follows a clockwise convention starting from North: `0` means North-South strips, `90` means East-West strips, and so on.
+
+```bash
+$ sfogliatrice --heading 45 fixtures/gran_canaria.geojson
+```
+
+Notice the 45 degrees lines now:
+
+<img src="https://raw.githubusercontent.com/Racum/sfogliatrice/main/assets/gran_canaria_heading.png" width="400">
 
 ## Rust Library
 
@@ -159,6 +173,7 @@ pub struct Config {
     pub inflation: f64,
     pub force_line_targets: bool,
     pub force_square_coverages: bool,
+    pub heading: Option<f64>,  // None = auto-detect, Some(degrees) = fixed orientation
 }
 ```
 

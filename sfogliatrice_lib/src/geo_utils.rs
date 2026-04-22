@@ -106,18 +106,111 @@ where
         .collect()
 }
 
-/// Returns the four boundary lines of the minimum rotated rectangle of a given geometry.
-/// Returns None if the geometry is degenerate (e.g. a single point or collinear set of points).
-pub fn get_rectangular_boundary_lines(geometry: &Geometry) -> Option<[Line; 4]> {
-    let mbr = MinimumRotatedRect::minimum_rotated_rect(geometry)?;
-    mbr.exterior().lines().take(4).collect::<Vec<_>>().try_into().ok()
+/// Returns the point on the polygon's convex hull that is furthest from `line`.
+/// The reference lines passed here are always longer than the geometry (see `rotated_envelope`),
+/// so segment distance equals perpendicular distance for all real inputs.
+fn furthest_from_line(polygon: &Polygon, line: &Line) -> Point {
+    polygon
+        .convex_hull()
+        .exterior()
+        .points()
+        .max_by(|a, b| {
+            Euclidean
+                .distance(a, line)
+                .partial_cmp(&Euclidean.distance(b, line))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or_else(|| Point::from(line.start))
 }
 
-/// Returns the two shorter sides of the boundary lines rectangle.
-/// The list of boundary lines is expected to be ordered by "going around" a
-/// given rectangle in a clockwise or counter-clockwise fashion.
-pub fn get_rectangular_shorter_sides(boundary_lines: [Line; 4]) -> [Line; 2] {
-    if Euclidean.length(&boundary_lines[0]) > Euclidean.length(&boundary_lines[1]) {
+/// Returns the intersection point of two infinite lines, or None if they are parallel.
+/// Solved via Cramer's rule on the system a1x + b1y = c1, a2x + b2y = c2.
+fn lines_intersection(l1: &Line, l2: &Line) -> Option<Point> {
+    let a1 = l1.end.y - l1.start.y;
+    let b1 = l1.start.x - l1.end.x;
+    let c1 = a1 * l1.start.x + b1 * l1.start.y;
+    let a2 = l2.end.y - l2.start.y;
+    let b2 = l2.start.x - l2.end.x;
+    let c2 = a2 * l2.start.x + b2 * l2.start.y;
+    let det = a1 * b2 - a2 * b1;
+    if det.abs() < 1e-10 {
+        return None;
+    }
+    Some(Point::new((c1 * b2 - c2 * b1) / det, (a1 * c2 - a2 * c1) / det))
+}
+
+/// Creates a line of given length centred on `center` at the given heading in degrees
+/// (0 = N-S, 90 = E-W, increasing clockwise).
+fn plot_line(center: &Point, length: f64, heading: f64) -> Line {
+    let angle = (90.0_f64 - heading).to_radians();
+    let ext_x = (length / 2.0) * angle.cos();
+    let ext_y = (length / 2.0) * angle.sin();
+    Line::new(
+        coord! { x: center.x() - ext_x, y: center.y() - ext_y },
+        coord! { x: center.x() + ext_x, y: center.y() + ext_y },
+    )
+}
+
+/// Builds a rotated bounding rectangle aligned to `heading` by finding the extreme points
+/// of the convex hull along the parallel and perpendicular axes, then intersecting the four
+/// boundary lines to form the rectangle corners.
+fn rotated_envelope(geometry: &Geometry, heading: f64) -> Option<Polygon> {
+    let Geometry::Polygon(source) = geometry else {
+        return None;
+    };
+    let hull = source.convex_hull();
+    let bbox = source.bounding_rect()?;
+    let length = 2.0 * (bbox.width() + bbox.height());
+    let centroid = hull.centroid()?;
+
+    let ref_parallel = plot_line(&centroid, length, heading);
+    let ref_perp = plot_line(&centroid, length, heading + 90.0);
+
+    let side1 = plot_line(&furthest_from_line(&hull, &ref_parallel), length, heading);
+    let side2 = plot_line(&furthest_from_line(&hull, &side1), length, heading);
+    let side3 = plot_line(&furthest_from_line(&hull, &ref_perp), length, heading + 90.0);
+    let side4 = plot_line(&furthest_from_line(&hull, &side3), length, heading + 90.0);
+
+    let c0 = lines_intersection(&side1, &side3)?;
+    let c1 = lines_intersection(&side2, &side3)?;
+    let c2 = lines_intersection(&side2, &side4)?;
+    let c3 = lines_intersection(&side1, &side4)?;
+
+    Some(Polygon::new(
+        LineString::from(vec![
+            coord! { x: c0.x(), y: c0.y() },
+            coord! { x: c1.x(), y: c1.y() },
+            coord! { x: c2.x(), y: c2.y() },
+            coord! { x: c3.x(), y: c3.y() },
+            coord! { x: c0.x(), y: c0.y() },
+        ]),
+        vec![],
+    ))
+}
+
+/// Returns the four boundary lines of the bounding rectangle of a given geometry.
+/// When `heading` is `Some`, a rotated envelope aligned to that heading is used;
+/// otherwise the minimum rotated rectangle is used.
+/// Returns None if the geometry is degenerate (e.g. a single point or collinear set of points).
+pub fn get_rectangular_boundary_lines(geometry: &Geometry, heading: Option<f64>) -> Option<[Line; 4]> {
+    if let Some(mut angle) = heading {
+        // Exact multiples of 90° cause degenerate perpendicular line intersections; nudge slightly.
+        if (angle % 360.0) % 90.0 == 0.0 {
+            angle += 0.000001;
+        }
+        let rect = rotated_envelope(geometry, angle)?;
+        rect.exterior().lines().take(4).collect::<Vec<_>>().try_into().ok()
+    } else {
+        let mbr = MinimumRotatedRect::minimum_rotated_rect(geometry)?;
+        mbr.exterior().lines().take(4).collect::<Vec<_>>().try_into().ok()
+    }
+}
+
+/// Returns the two sides of the boundary lines rectangle used as roll lines.
+/// When `heading` is `Some`, sides 0 and 2 are always chosen (they are perpendicular to
+/// the heading direction by construction). Otherwise the shorter pair is chosen.
+pub fn get_rectangular_shorter_sides(boundary_lines: [Line; 4], heading: Option<f64>) -> [Line; 2] {
+    if heading.is_none() && Euclidean.length(&boundary_lines[0]) > Euclidean.length(&boundary_lines[1]) {
         [boundary_lines[1], boundary_lines[3]]
     } else {
         [boundary_lines[0], boundary_lines[2]]
@@ -142,11 +235,13 @@ pub fn sort_by_highest_line(lines: [Line; 2]) -> [Line; 2] {
     lines
 }
 
-/// Returns the two shorter sides of the minimum rotated rectangle, pointing downward, top-most first ("Roll out").
-/// Returns None if the geometry is degenerate and has no well-defined minimum rotated rectangle.
-pub fn roll_lines(geometry: &Geometry) -> Option<[Line; 2]> {
-    let boundary_lines = get_rectangular_boundary_lines(geometry)?;
-    let shorter_boundary_lines = get_rectangular_shorter_sides(boundary_lines);
+/// Returns the two roll-out sides of the bounding rectangle, pointing downward, top-most first.
+/// When `heading` is `Some`, the rectangle is aligned to that angle and the sides
+/// perpendicular to it are chosen; otherwise the minimum rotated rectangle is used.
+/// Returns None if the geometry is degenerate and has no well-defined bounding rectangle.
+pub fn roll_lines(geometry: &Geometry, heading: Option<f64>) -> Option<[Line; 2]> {
+    let boundary_lines = get_rectangular_boundary_lines(geometry, heading)?;
+    let shorter_boundary_lines = get_rectangular_shorter_sides(boundary_lines, heading);
     let shorter_boundary_lines_pointing_down = ensure_lines_pointing_down(shorter_boundary_lines);
     Some(sort_by_highest_line(shorter_boundary_lines_pointing_down))
 }
@@ -230,7 +325,7 @@ pub fn intersect_line(geometry: &Polygon, full_line: &Line, strip_width: f64, mi
     if intersected_polygon.is_empty() {
         return None;
     }
-    let Some([roll_from, roll_to]) = roll_lines(&Geometry::Polygon(full_strip)) else {
+    let Some([roll_from, roll_to]) = roll_lines(&Geometry::Polygon(full_strip), None) else {
         return Some(*full_line);
     };
     let leading_distance = Euclidean.distance(&intersected_polygon, &roll_from);

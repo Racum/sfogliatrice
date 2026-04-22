@@ -74,6 +74,10 @@ struct Cli {
     #[arg(long = "square-coverages")]
     square_coverages: bool,
 
+    /// Target heading angle in degrees (0.0 means north to south)
+    #[arg(long = "heading")]
+    heading: Option<f64>,
+
     /// Print version information.
     #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
     version: (),
@@ -116,18 +120,23 @@ fn run(cli: &Cli, input_str: &str) -> Result<RunOutput, String> {
         }
     }
 
-    let config = Config {
-        shard_radius: cli.max_length,
-        ..Config::new(
-            cli.expansion,
-            cli.width,
-            cli.max_length,
-            cli.min_overlap,
-            cli.line_targets,
-            cli.square_coverages,
-        )
-        .map_err(|e| e.to_string())?
-    };
+    if let Some(angle) = cli.heading
+        && !angle.is_finite()
+    {
+        return Err(format!("--heading must be a finite number, got {angle}."));
+    }
+
+    let config = Config::new(
+        cli.expansion,
+        cli.width,
+        cli.max_length,
+        cli.min_overlap,
+        cli.line_targets,
+        cli.square_coverages,
+        cli.max_length,
+        cli.heading,
+    )
+    .map_err(|e| e.to_string())?;
 
     // Flag precedence: targets are shown by default; `--no-targets` hides them; `--all` overrides
     // `--no-targets` and forces every output (targets + coverages + intermediates + original).
@@ -380,5 +389,23 @@ mod tests {
         let cli = make_cli(&["--all"]);
         let out = run(&cli, SAMPLE_POLYGON).unwrap();
         assert!(!out.stdout.contains('\n'), "compact output must be single-line");
+    }
+
+    #[test]
+    fn test_run_heading_produces_output() {
+        let cli = make_cli(&["--heading", "45"]);
+        let out = run(&cli, SAMPLE_POLYGON).unwrap();
+        let v: Value = serde_json::from_str(&out.stdout).unwrap();
+        assert!(
+            !v["features"].as_array().unwrap().is_empty(),
+            "heading must produce features"
+        );
+    }
+
+    #[test]
+    fn test_run_heading_rejects_nan() {
+        let cli = make_cli(&["--heading", "NaN"]);
+        let err = run(&cli, SAMPLE_POLYGON).unwrap_err();
+        assert!(err.contains("--heading"), "got: {err}");
     }
 }

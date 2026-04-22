@@ -49,7 +49,7 @@ fn tessellate_block(geometry: &Polygon, config: &Config) -> TessellationTuple {
         return (vec![Target::Point(center)], vec![coverage]);
     }
 
-    let Some([roll_from, roll_to]) = roll_lines(&Geometry::Polygon(geometry.clone())) else {
+    let Some([roll_from, roll_to]) = roll_lines(&Geometry::Polygon(geometry.clone()), config.heading) else {
         return (vec![], vec![]);
     };
     let roll_from_length = Euclidean.length(&roll_from);

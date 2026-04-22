@@ -26,6 +26,7 @@ pub struct Config {
     pub inflation: f64,
     pub force_line_targets: bool,
     pub force_square_coverages: bool,
+    pub heading: Option<f64>,
 }
 
 /// Describes which parameter failed validation and why.
@@ -57,6 +58,7 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl Config {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         expansion: f64,
         strip_width: f64,
@@ -64,6 +66,8 @@ impl Config {
         min_overlap: f64,
         force_line_targets: bool,
         force_square_coverages: bool,
+        shard_radius: f64,
+        heading: Option<f64>,
     ) -> Result<Self, ConfigError> {
         if expansion > MAX_EXPANSION {
             return Err(ConfigError::ExpansionTooLarge);
@@ -84,6 +88,8 @@ impl Config {
             min_overlap,
             force_line_targets,
             force_square_coverages,
+            shard_radius,
+            heading,
             ..Self::default()
         })
     }
@@ -102,6 +108,7 @@ impl Default for Config {
             inflation: DEFAULT_INFLATION,
             force_line_targets: false,
             force_square_coverages: false,
+            heading: None,
         }
     }
 }
@@ -136,11 +143,12 @@ mod tests {
         assert_eq!(c.inflation, DEFAULT_INFLATION);
         assert!(!c.force_line_targets);
         assert!(!c.force_square_coverages);
+        assert!(c.heading.is_none());
     }
 
     #[test]
     fn test_config_new_happy_path_populates_non_param_fields_from_default() {
-        let c = Config::new(1_000.0, 2_000.0, 20_000.0, 100.0, true, true).unwrap();
+        let c = Config::new(1_000.0, 2_000.0, 20_000.0, 100.0, true, true, 25_000.0, Some(30.0)).unwrap();
         // Explicit fields:
         assert_eq!(c.expansion, 1_000.0);
         assert_eq!(c.strip_width, 2_000.0);
@@ -148,37 +156,68 @@ mod tests {
         assert_eq!(c.min_overlap, 100.0);
         assert!(c.force_line_targets);
         assert!(c.force_square_coverages);
+        assert_eq!(c.shard_radius, 25_000.0);
+        assert_eq!(c.heading, Some(30.0));
         // Defaulted fields:
         assert_eq!(c.min_strip_length, DEFAULT_MIN_STRIP_LENGTH);
         assert_eq!(c.shard_density_ratio, DEFAULT_SHARD_DENSITY_RATIO);
-        assert_eq!(c.shard_radius, DEFAULT_SHARD_RADIUS);
         assert_eq!(c.inflation, DEFAULT_INFLATION);
     }
 
     #[test]
     fn test_config_new_expansion_too_large() {
-        let err = Config::new(MAX_EXPANSION + 1.0, 5_000.0, 50_000.0, 220.0, false, false).unwrap_err();
+        let err = Config::new(
+            MAX_EXPANSION + 1.0,
+            5_000.0,
+            50_000.0,
+            220.0,
+            false,
+            false,
+            50_000.0,
+            None,
+        )
+        .unwrap_err();
         assert_eq!(err, ConfigError::ExpansionTooLarge);
     }
 
     #[test]
     fn test_config_new_strip_width_too_large() {
-        let err = Config::new(5_000.0, MAX_STRIP_WIDTH + 1.0, 50_000.0, 220.0, false, false).unwrap_err();
+        let err = Config::new(
+            5_000.0,
+            MAX_STRIP_WIDTH + 1.0,
+            50_000.0,
+            220.0,
+            false,
+            false,
+            50_000.0,
+            None,
+        )
+        .unwrap_err();
         assert_eq!(err, ConfigError::StripWidthTooLarge);
     }
 
     #[test]
     fn test_config_new_max_strip_length_too_large() {
-        let err = Config::new(5_000.0, 5_000.0, MAX_STRIP_LENGTH + 1.0, 220.0, false, false).unwrap_err();
+        let err = Config::new(
+            5_000.0,
+            5_000.0,
+            MAX_STRIP_LENGTH + 1.0,
+            220.0,
+            false,
+            false,
+            50_000.0,
+            None,
+        )
+        .unwrap_err();
         assert_eq!(err, ConfigError::MaxStripLengthTooLarge);
     }
 
     #[test]
     fn test_config_new_min_overlap_too_large() {
         // min_overlap >= strip_width / 2
-        let err = Config::new(5_000.0, 1_000.0, 50_000.0, 500.0, false, false).unwrap_err();
+        let err = Config::new(5_000.0, 1_000.0, 50_000.0, 500.0, false, false, 50_000.0, None).unwrap_err();
         assert_eq!(err, ConfigError::MinOverlapTooLarge);
-        let err = Config::new(5_000.0, 1_000.0, 50_000.0, 1_000.0, false, false).unwrap_err();
+        let err = Config::new(5_000.0, 1_000.0, 50_000.0, 1_000.0, false, false, 50_000.0, None).unwrap_err();
         assert_eq!(err, ConfigError::MinOverlapTooLarge);
     }
 
