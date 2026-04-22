@@ -133,7 +133,8 @@ fn run(cli: &Cli, input_str: &str) -> Result<RunOutput, String> {
         cli.min_overlap,
         cli.line_targets,
         cli.square_coverages,
-        cli.max_length,
+        cli.max_length, // shard_radius is not exposed as a CLI flag; it intentionally follows
+        // --max-length so that shards never exceed the strip length in size.
         cli.heading,
     )
     .map_err(|e| e.to_string())?;

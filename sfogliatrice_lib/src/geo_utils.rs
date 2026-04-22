@@ -335,7 +335,8 @@ pub fn intersect_line(geometry: &Polygon, full_line: &Line, strip_width: f64, mi
         partial_line = substring(full_line, 0., full_line_length - trailing_distance);
     }
     if leading_distance > 0. {
-        partial_line = substring(&partial_line, leading_distance, full_line_length);
+        let partial_line_length = Euclidean.length(&partial_line);
+        partial_line = substring(&partial_line, leading_distance, partial_line_length);
     }
     Some(partial_line)
 }
@@ -429,10 +430,10 @@ const MAX_SHARDS: usize = 10_000;
 /// Streaming iterator over the shards of a polygon. One step of the sharding loop produces zero
 /// or more shards (the intersection of the current remainder with a circular zone around its
 /// furthest point); those are buffered in `pending` and drained before the loop advances again.
-/// The `remaining` polygon is consumed and replaced each step. When `remaining` is `None`, the
-/// iterator is exhausted.
+/// `remaining` holds pieces still to be sharded; when it and `pending` are both empty, the
+/// iterator is exhausted. Multiple pieces arise when `difference` splits the remainder.
 pub struct ShardIterator {
-    remaining: Option<Polygon>,
+    remaining: std::collections::VecDeque<Polygon>,
     pending: std::collections::VecDeque<Polygon>,
     shard_radius: f64,
     shards_produced: usize,
@@ -447,9 +448,10 @@ impl Iterator for ShardIterator {
                 self.shards_produced += 1;
                 return Some(shard);
             }
-            let remaining = self.remaining.take()?;
+            let remaining = self.remaining.pop_front()?;
             if self.shards_produced >= MAX_SHARDS {
-                // Cap reached: emit the remainder and stop.
+                // Cap reached: emit this piece and drain the rest as-is so nothing is lost.
+                self.pending.extend(self.remaining.drain(..));
                 return Some(remaining);
             }
             let furthest_pd = furthest_from_centroid(&remaining);
@@ -466,17 +468,15 @@ impl Iterator for ShardIterator {
                 .into_iter()
                 .next()
             else {
-                // Buffer failed (degenerate point) — emit the remainder as-is and stop.
+                // Buffer failed (degenerate point) — emit this piece as-is and continue.
                 return Some(remaining);
             };
             let intersected: MultiPolygon = remaining.intersection(&shard_zone);
             for semi_shard in iterate_polygons(&Geometry::MultiPolygon(intersected)) {
                 self.pending.push_back(semi_shard);
             }
-            if let Some(next) = remaining.difference(&shard_zone).into_iter().next() {
-                self.remaining = Some(next);
-            }
-            // Loop back to drain `pending` (or finish if it's empty and `remaining` is None).
+            self.remaining.extend(remaining.difference(&shard_zone));
+            // Loop back to drain `pending` (or finish if both `pending` and `remaining` are empty).
         }
     }
 }
@@ -496,9 +496,15 @@ pub fn iterate_shards(geometry: &Polygon, shard_radius: f64, shard_density_ratio
     // Skip-path yields the whole polygon once via `pending`; shard-path seeds `remaining` so the
     // iterator's `next()` loop drives the sharding steps.
     let (remaining, pending) = if skip_sharding {
-        (None, std::collections::VecDeque::from([geometry.clone()]))
+        (
+            std::collections::VecDeque::new(),
+            std::collections::VecDeque::from([geometry.clone()]),
+        )
     } else {
-        (Some(geometry.clone()), std::collections::VecDeque::new())
+        (
+            std::collections::VecDeque::from([geometry.clone()]),
+            std::collections::VecDeque::new(),
+        )
     };
     ShardIterator {
         remaining,
@@ -535,7 +541,7 @@ pub fn ensure_line_length(line: &Line, min_length: f64) -> Line {
 /// Returns None when the buffer cannot produce a polygon: non-finite or non-positive `size`,
 /// `size < 2 * CIRCLE_EXPANSION_CORRECTION` for Points (circle radius would be non-positive),
 /// or an underlying geo buffer returning empty.
-pub fn coerce_to_polygon(geometry: &Geometry, size: f64) -> Option<Polygon> {
+pub(crate) fn coerce_to_polygon(geometry: &Geometry, size: f64) -> Option<Polygon> {
     if !size.is_finite() || size <= 0.0 {
         return None;
     }
@@ -555,8 +561,7 @@ pub fn coerce_to_polygon(geometry: &Geometry, size: f64) -> Option<Polygon> {
             .into_iter()
             .next()
         }
-        // Callers (tessellate) pass geometries from iterate_normalized_geometry, which only
-        // yields Polygon, Line, or Point after flattening through iterate_geometry.
+        // Only reachable internally; iterate_normalized_geometry only yields Polygon, Line, Point.
         _ => unreachable!(),
     }
 }

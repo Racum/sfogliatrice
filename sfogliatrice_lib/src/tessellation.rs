@@ -99,6 +99,7 @@ fn tessellate_block(geometry: &Polygon, config: &Config) -> TessellationTuple {
 }
 
 /// Tessellates a list of cartesian polygons, applying the sharding strategy.
+/// **Polygons must be in metre space** — use [`tessellate`] for geodesic (lon/lat) input.
 pub fn tessellate_strategy(polygons: &[Polygon], config: &Config) -> TessellationTuple {
     let mut targets: Vec<Target> = vec![];
     let mut coverages: Vec<Polygon> = vec![];
@@ -143,7 +144,13 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationResul
         };
     };
 
-    let transformer = get_projection(&anchor);
+    let Some(transformer) = get_projection(&anchor) else {
+        return TessellationResult {
+            targets: vec![],
+            coverages: vec![],
+            intermediates: vec![],
+        };
+    };
 
     // Project every input geometry from geodesic (degrees) to cartesian (meters).
     // Geometries that fail projection are silently dropped.

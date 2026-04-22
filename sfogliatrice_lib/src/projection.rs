@@ -3,8 +3,9 @@ use geo_omerc::OMercTransformer;
 
 /// Returns a bidirectional Oblique Mercator transformer anchored at the given centroid.
 /// The transformer converts between geodesic (lon/lat in degrees) and cartesian (x/y in meters).
-pub fn get_projection(centroid: &Point) -> OMercTransformer {
-    OMercTransformer::new(centroid).expect("Failed to create Oblique Mercator projection")
+/// Returns `None` if the projection cannot be constructed (e.g. NaN or out-of-range coordinates).
+pub fn get_projection(centroid: &Point) -> Option<OMercTransformer> {
+    OMercTransformer::new(centroid).ok()
 }
 
 #[cfg(test)]
@@ -43,7 +44,7 @@ mod tests {
         use geo::{Distance, Euclidean, Geometry};
 
         let anchor = test_polygon().centroid().unwrap();
-        let transformer = get_projection(&anchor);
+        let transformer = get_projection(&anchor).unwrap();
 
         // A point slightly offset from anchor should round-trip cleanly.
         let original = Point::new(anchor.x() + 0.01, anchor.y() + 0.01);
@@ -62,7 +63,7 @@ mod tests {
         use geo::{Distance, Euclidean, Geometry, LineString, line_string};
 
         let anchor = test_polygon().centroid().unwrap();
-        let transformer = get_projection(&anchor);
+        let transformer = get_projection(&anchor).unwrap();
         let original = line_string![
             (x: anchor.x(), y: anchor.y()),
             (x: anchor.x() + 0.01, y: anchor.y()),
@@ -86,7 +87,7 @@ mod tests {
         use geo::{Distance, Euclidean, Geometry, Polygon};
 
         let anchor = test_polygon().centroid().unwrap();
-        let transformer = get_projection(&anchor);
+        let transformer = get_projection(&anchor).unwrap();
         let original = test_polygon();
         let cartesian = transformer.to_cartesian(&Geometry::Polygon(original.clone())).unwrap();
         let back = transformer.to_geodesic(&cartesian).unwrap();
@@ -105,11 +106,17 @@ mod tests {
 
         // Anchor near the Arctic Circle: ensure the projection still constructs and round-trips.
         let anchor = Point::new(20.0_f64, 80.0_f64);
-        let transformer = get_projection(&anchor);
+        let transformer = get_projection(&anchor).unwrap();
         let original = Point::new(anchor.x() + 0.01, anchor.y() + 0.01);
         let cartesian = transformer.to_cartesian(&Geometry::Point(original)).unwrap();
         let back: Point = transformer.to_geodesic(&cartesian).unwrap().try_into().unwrap();
         assert!(Euclidean.distance(original, back) < 1e-6);
+    }
+
+    #[test]
+    fn test_get_projection_nan_anchor_returns_none() {
+        assert!(get_projection(&Point::new(f64::NAN, 0.0)).is_none());
+        assert!(get_projection(&Point::new(0.0, f64::NAN)).is_none());
     }
 
     #[test]
@@ -119,7 +126,7 @@ mod tests {
         // Two points ~111 km apart (1 degree of latitude ≈ 111 000 m)
         let anchor = Point::new(0.0_f64, 0.0_f64);
         let one_degree_north = Point::new(0.0_f64, 1.0_f64);
-        let transformer = get_projection(&anchor);
+        let transformer = get_projection(&anchor).unwrap();
 
         let c_anchor = transformer.to_cartesian(&Geometry::Point(anchor)).unwrap();
         let c_north = transformer.to_cartesian(&Geometry::Point(one_degree_north)).unwrap();

@@ -32,6 +32,9 @@ pub struct Config {
 /// Describes which parameter failed validation and why.
 #[derive(Debug, PartialEq)]
 pub enum ConfigError {
+    ExpansionNotPositive,
+    StripWidthNotPositive,
+    MaxStripLengthNotPositive,
     ExpansionTooLarge,
     StripWidthTooLarge,
     MaxStripLengthTooLarge,
@@ -41,6 +44,15 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ConfigError::ExpansionNotPositive => {
+                write!(f, "Expansion must be a positive finite number.")
+            }
+            ConfigError::StripWidthNotPositive => {
+                write!(f, "Width must be a positive finite number.")
+            }
+            ConfigError::MaxStripLengthNotPositive => {
+                write!(f, "Maximum length must be a positive finite number.")
+            }
             ConfigError::ExpansionTooLarge => {
                 write!(f, "Expansion exceeds maximum of {}Km.", MAX_EXPANSION / 1000.0)
             }
@@ -69,11 +81,20 @@ impl Config {
         shard_radius: f64,
         heading: Option<f64>,
     ) -> Result<Self, ConfigError> {
+        if !expansion.is_finite() || expansion <= 0.0 {
+            return Err(ConfigError::ExpansionNotPositive);
+        }
         if expansion > MAX_EXPANSION {
             return Err(ConfigError::ExpansionTooLarge);
         }
+        if !strip_width.is_finite() || strip_width <= 0.0 {
+            return Err(ConfigError::StripWidthNotPositive);
+        }
         if strip_width > MAX_STRIP_WIDTH {
             return Err(ConfigError::StripWidthTooLarge);
+        }
+        if !max_strip_length.is_finite() || max_strip_length <= 0.0 {
+            return Err(ConfigError::MaxStripLengthNotPositive);
         }
         if max_strip_length > MAX_STRIP_LENGTH {
             return Err(ConfigError::MaxStripLengthTooLarge);
@@ -165,6 +186,37 @@ mod tests {
     }
 
     #[test]
+    fn test_config_new_rejects_non_positive_params() {
+        // NaN
+        assert_eq!(
+            Config::new(f64::NAN, 5_000.0, 50_000.0, 200.0, false, false, 50_000.0, None).unwrap_err(),
+            ConfigError::ExpansionNotPositive
+        );
+        assert_eq!(
+            Config::new(5_000.0, f64::NAN, 50_000.0, 200.0, false, false, 50_000.0, None).unwrap_err(),
+            ConfigError::StripWidthNotPositive
+        );
+        assert_eq!(
+            Config::new(5_000.0, 5_000.0, f64::NAN, 200.0, false, false, 50_000.0, None).unwrap_err(),
+            ConfigError::MaxStripLengthNotPositive
+        );
+        // Zero
+        assert_eq!(
+            Config::new(0.0, 5_000.0, 50_000.0, 200.0, false, false, 50_000.0, None).unwrap_err(),
+            ConfigError::ExpansionNotPositive
+        );
+        // Negative
+        assert_eq!(
+            Config::new(5_000.0, -1.0, 50_000.0, 200.0, false, false, 50_000.0, None).unwrap_err(),
+            ConfigError::StripWidthNotPositive
+        );
+        assert_eq!(
+            Config::new(5_000.0, 5_000.0, -1.0, 200.0, false, false, 50_000.0, None).unwrap_err(),
+            ConfigError::MaxStripLengthNotPositive
+        );
+    }
+
+    #[test]
     fn test_config_new_expansion_too_large() {
         let err = Config::new(
             MAX_EXPANSION + 1.0,
@@ -223,6 +275,18 @@ mod tests {
 
     #[test]
     fn test_config_error_display() {
+        assert_eq!(
+            ConfigError::ExpansionNotPositive.to_string(),
+            "Expansion must be a positive finite number."
+        );
+        assert_eq!(
+            ConfigError::StripWidthNotPositive.to_string(),
+            "Width must be a positive finite number."
+        );
+        assert_eq!(
+            ConfigError::MaxStripLengthNotPositive.to_string(),
+            "Maximum length must be a positive finite number."
+        );
         assert_eq!(
             ConfigError::ExpansionTooLarge.to_string(),
             format!("Expansion exceeds maximum of {}Km.", MAX_EXPANSION / 1000.0)

@@ -352,6 +352,35 @@ fn test_iterate_shards_shardable() {
 }
 
 #[test]
+fn test_iterate_shards_area_fully_covered() {
+    // A cross/plus shape: two overlapping rectangles forming a non-convex polygon.
+    // The difference after each shard step can split into multiple pieces; this test
+    // confirms all pieces are retained (R3 fix) and total area is conserved.
+    let input_polygon = polygon![
+        (x: -10_000., y: -30_000.),
+        (x:  10_000., y: -30_000.),
+        (x:  10_000., y: -10_000.),
+        (x:  30_000., y: -10_000.),
+        (x:  30_000., y:  10_000.),
+        (x:  10_000., y:  10_000.),
+        (x:  10_000., y:  30_000.),
+        (x: -10_000., y:  30_000.),
+        (x: -10_000., y:  10_000.),
+        (x: -30_000., y:  10_000.),
+        (x: -30_000., y: -10_000.),
+        (x: -10_000., y: -10_000.),
+        (x: -10_000., y: -30_000.),
+    ];
+    let shards: Vec<Polygon> = iterate_shards(&input_polygon, 15_000., DEFAULT_SHARD_DENSITY_RATIO).collect();
+    let input_area = input_polygon.unsigned_area();
+    let output_area: f64 = shards.iter().map(|p| p.unsigned_area()).sum();
+    assert!(
+        (input_area - output_area).abs() / input_area < 0.01,
+        "shards must cover > 99% of input area"
+    );
+}
+
+#[test]
 fn test_iterate_shards_not_shardable() {
     // Shardable:
     let input_polygon = polygon![

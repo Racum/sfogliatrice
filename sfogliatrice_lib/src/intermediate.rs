@@ -180,7 +180,8 @@ mod tests {
             let centroid = gc
                 .centroid()
                 .unwrap_or_else(|| panic!("Failed to compute centroid for {name}"));
-            let transformer = get_projection(&centroid);
+            let transformer =
+                get_projection(&centroid).unwrap_or_else(|| panic!("Failed to build projection for {name}"));
 
             let cartesian_geometries =
                 iterate_normalized_geometry(&geodesic_geometries, |g| transformer.to_cartesian(g).ok());
