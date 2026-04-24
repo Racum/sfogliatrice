@@ -303,7 +303,6 @@
       <div class="field"><label>Expansion (m)</label><input type="number" id="expansion"              value="5000"></div>
       <div class="field"><label>Shard density ratio</label><input type="number" id="shard_density_ratio" value="0.3" step="0.01"></div>
       <div class="field"><label>Shard radius (m)</label><input type="number" id="shard_radius"        value="50000"></div>
-      <div class="field"><label>Inflation (m)</label><input type="number" id="inflation"              value="5000"></div>
       <div class="field"><label>Force line targets</label><input type="checkbox" id="force_line_targets"></div>
       <div class="field"><label>Force square coverages</label><input type="checkbox" id="force_square_coverages"></div>
     </div>
@@ -671,7 +670,7 @@
         geojson,
         num('strip_width'), num('min_strip_length'), num('max_strip_length'),
         num('min_overlap'), num('expansion'), num('shard_density_ratio'),
-        num('shard_radius'), num('inflation'),
+        num('shard_radius'),
         bool('force_line_targets'), bool('force_square_coverages'),
         heading(),
       );

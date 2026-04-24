@@ -177,7 +177,7 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationResul
         .collect();
 
     // Merge nearby polygons into intermediates.
-    let cartesian_intermediates = combine_polygons(&expanded, config.inflation);
+    let cartesian_intermediates = combine_polygons(&expanded, config.strip_width);
 
     // Tessellate each intermediate polygon into targets and coverages.
     let (cartesian_targets, cartesian_coverages) = tessellate_strategy(&cartesian_intermediates, config);

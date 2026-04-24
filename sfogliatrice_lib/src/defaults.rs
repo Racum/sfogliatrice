@@ -14,7 +14,6 @@ pub const DEFAULT_MIN_STRIP_LENGTH: f64 = 5_000.0; // In meters
 pub const DEFAULT_MAX_STRIP_LENGTH: f64 = 50_000.0; // In meters
 pub const DEFAULT_MIN_OVERLAP: f64 = 200.0; // In meters
 pub const DEFAULT_SHARD_RADIUS: f64 = 50_000.0; // In meters
-pub const DEFAULT_INFLATION: f64 = 5_000.0; // In meters
 pub const DEFAULT_TARGET_EXPANSION: f64 = 5_000.0; // In meters
 
 // Calculates the angle in radians that makes a point buffered with LineJoin::Round return a Polygon with 36 vertices:

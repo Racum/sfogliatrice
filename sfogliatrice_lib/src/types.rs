@@ -1,5 +1,5 @@
 use crate::defaults::{
-    DEFAULT_INFLATION, DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_MIN_STRIP_LENGTH,
+    DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_MIN_STRIP_LENGTH,
     DEFAULT_SHARD_DENSITY_RATIO, DEFAULT_SHARD_RADIUS, DEFAULT_STRIP_WIDTH, DEFAULT_TARGET_EXPANSION,
 };
 use geo::{LineString, Point, Polygon};
@@ -16,16 +16,25 @@ pub enum Target {
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Width of each survey strip, in meters.
     pub strip_width: f64,
+    /// Minimum strip length before two strips are merged, in meters.
     pub min_strip_length: f64,
+    /// Maximum strip length before a strip is split, in meters.
     pub max_strip_length: f64,
+    /// Minimum overlap between adjacent strips, in meters.
     pub min_overlap: f64,
+    /// Buffer applied to Points and LineStrings before merging, in meters.
     pub expansion: f64,
+    /// Fraction of `shard_radius` used as the grid cell size when sharding large intermediates.
     pub shard_density_ratio: f64,
+    /// Maximum radius of a shard cluster before an intermediate is split, in meters.
     pub shard_radius: f64,
-    pub inflation: f64,
+    /// Always emit line targets even when the geometry is small enough for a point target.
     pub force_line_targets: bool,
+    /// Always emit square coverage for Points instead of circles.
     pub force_square_coverages: bool,
+    /// Fixed strip heading in degrees; empty lets the algorithm choose the optimal angle.
     pub heading: Option<f64>,
 }
 
@@ -126,7 +135,6 @@ impl Default for Config {
             expansion: DEFAULT_TARGET_EXPANSION,
             shard_density_ratio: DEFAULT_SHARD_DENSITY_RATIO,
             shard_radius: DEFAULT_SHARD_RADIUS,
-            inflation: DEFAULT_INFLATION,
             force_line_targets: false,
             force_square_coverages: false,
             heading: None,
@@ -147,7 +155,7 @@ pub type TessellationTuple = (Vec<Target>, Vec<Polygon>);
 mod tests {
     use super::*;
     use crate::defaults::{
-        DEFAULT_INFLATION, DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_MIN_STRIP_LENGTH,
+        DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_MIN_STRIP_LENGTH,
         DEFAULT_SHARD_DENSITY_RATIO, DEFAULT_SHARD_RADIUS, DEFAULT_STRIP_WIDTH, DEFAULT_TARGET_EXPANSION,
     };
 
@@ -161,7 +169,6 @@ mod tests {
         assert_eq!(c.expansion, DEFAULT_TARGET_EXPANSION);
         assert_eq!(c.shard_density_ratio, DEFAULT_SHARD_DENSITY_RATIO);
         assert_eq!(c.shard_radius, DEFAULT_SHARD_RADIUS);
-        assert_eq!(c.inflation, DEFAULT_INFLATION);
         assert!(!c.force_line_targets);
         assert!(!c.force_square_coverages);
         assert!(c.heading.is_none());
@@ -182,7 +189,6 @@ mod tests {
         // Defaulted fields:
         assert_eq!(c.min_strip_length, DEFAULT_MIN_STRIP_LENGTH);
         assert_eq!(c.shard_density_ratio, DEFAULT_SHARD_DENSITY_RATIO);
-        assert_eq!(c.inflation, DEFAULT_INFLATION);
     }
 
     #[test]
