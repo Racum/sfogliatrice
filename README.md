@@ -209,6 +209,23 @@ pub struct Config {
 }
 ```
 
+### WebAssenbly Package
+
+Before you build it, you need some requirements first:
+
+```
+$ rustup target add wasm32-unknown-unknown
+$ cargo install wasm-pack
+```
+
+Than, on `sfogliatrice_wasm` folder, run:
+
+```
+$ wasm-pack build --target web
+$ python3 -m http.server 8080
+```
+
+That will build the WASM package and run a webserver, than, open the page http://localhost:8080/test.html
 
 ## Contributing
 

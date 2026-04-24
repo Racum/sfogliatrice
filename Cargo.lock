@@ -858,6 +858,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sfogliatrice_wasm"
+version = "0.3.0"
+dependencies = [
+ "geo",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "sfogliatrice_lib",
+ "uuid",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "sif-itree"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

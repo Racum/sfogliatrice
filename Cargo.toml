@@ -1,5 +1,5 @@
 [workspace]
-members = ["sfogliatrice_lib", "sfogliatrice"]
+members = ["sfogliatrice_lib", "sfogliatrice", "sfogliatrice_wasm"]
 resolver = "2"
 
 [profile.release]

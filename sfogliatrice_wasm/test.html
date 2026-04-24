@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sfogliatrice WebAssembly Tessellation Test</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto 1fr;
+      height: 100dvh;
+      gap: 0;
+    }
+    header {
+      grid-column: 1 / -1;
+      grid-row: 1;
+      padding: 0.75rem 1rem;
+      background: #1a1a2e;
+      color: #eee;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header h1 { margin: 0; font-size: 1rem; font-weight: 600; flex: 1; }
+    #status { font-size: 0.8rem; opacity: 0.7; }
+    #status.ready { color: #6ef075; opacity: 1; }
+    #status.error  { color: #f07575; opacity: 1; }
+
+    #config-bar {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1rem;
+      padding: 0.6rem 1rem;
+      background: #f4f4f4;
+      border-bottom: 1px solid #ddd;
+      border-top: 1px solid #ddd;
+      align-items: flex-end;
+    }
+
+    #panels {
+      grid-column: 1 / -1;
+      grid-row: 3;
+      display: flex;
+      overflow: hidden;
+      min-height: 0;
+    }
+    panel {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #resizer {
+      width: 4px;
+      background: #ddd;
+      cursor: col-resize;
+      flex-shrink: 0;
+      transition: background 0.1s;
+    }
+    #resizer:hover, #resizer.dragging { background: #1a1a2e; }
+    body.resizing { user-select: none; cursor: col-resize; }
+    panel > .panel-label {
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #666;
+      border-bottom: 1px solid #eee;
+      background: #fafafa;
+      flex-shrink: 0;
+    }
+    textarea {
+      flex: 1;
+      font-family: monospace;
+      font-size: 0.8rem;
+      border: none;
+      outline: none;
+      resize: none;
+      padding: 0.75rem 1rem;
+      overflow: auto;
+    }
+
+    /* Result panel tabs */
+    .tab-bar {
+      display: flex;
+      border-bottom: 1px solid #eee;
+      background: #fafafa;
+      flex-shrink: 0;
+    }
+    .tab-bar button {
+      padding: 0.45rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #888;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      margin-bottom: -1px;
+    }
+    .tab-bar button.active {
+      color: #1a1a2e;
+      border-bottom-color: #1a1a2e;
+    }
+    .tab-content { display: none; flex: 1; overflow: hidden; }
+    .tab-content.active { display: flex; flex-direction: column; }
+
+    #map { flex: 1; }
+
+    #output {
+      flex: 1;
+      font-family: monospace;
+      font-size: 0.8rem;
+      white-space: pre;
+      padding: 0.75rem 1rem;
+      overflow: auto;
+      background: #fdfdfd;
+      color: #222;
+    }
+    #output.error { color: #c0392b; }
+
+    .field { display: flex; flex-direction: column; gap: 2px; }
+    .field label { font-size: 0.7rem; color: #555; white-space: nowrap; }
+    .field input[type=number], .field input[type=text] {
+      width: 7rem;
+      padding: 0.25rem 0.4rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+    .field input[type=checkbox] { margin-top: 0.4rem; }
+    button#run {
+      align-self: flex-end;
+      padding: 0.35rem 1.1rem;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      margin-left: auto;
+    }
+    button#run:hover { background: #2d2d5e; }
+    button#run:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── Main parameter sliders ──────────────────────────────────────────── */
+    .slider-field {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 130px;
+    }
+    .slider-field.wide { min-width: 180px; }
+    .slider-label {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.7rem;
+      color: #555;
+      white-space: nowrap;
+    }
+    .slider-val { font-weight: 600; color: #222; }
+    .auto-label {
+      display: flex;
+      align-items: center;
+      gap: 0.2rem;
+      margin-left: auto;
+      cursor: pointer;
+      font-size: 0.7rem;
+      color: #555;
+    }
+    input[type=range] { width: 100%; cursor: pointer; accent-color: #1a1a2e; }
+    input[type=range]:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    /* Dual range */
+    .dual-range-wrap {
+      position: relative;
+      height: 20px;
+      display: flex;
+      align-items: center;
+    }
+    .dual-track {
+      position: absolute;
+      left: 0; right: 0;
+      height: 4px;
+      background: #ddd;
+      border-radius: 2px;
+    }
+    .dual-fill {
+      position: absolute;
+      height: 100%;
+      background: #1a1a2e;
+      border-radius: 2px;
+    }
+    .dual-range-wrap input[type=range] {
+      position: absolute;
+      width: 100%;
+      background: transparent;
+    }
+    .dual-range-wrap input[type=range]::-webkit-slider-runnable-track { background: transparent; }
+    .dual-range-wrap input[type=range]::-moz-range-track { background: transparent; }
+    #min_strip_length { z-index: 1; }
+    #max_strip_length { z-index: 2; }
+
+    #advanced-wrap, #advanced-fields { display: contents; }
+    #advanced-fields.hidden { display: none !important; }
+    #advanced-toggle {
+      align-self: flex-end;
+      padding: 0.25rem 0.5rem;
+      background: none;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #888;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    #advanced-toggle:hover { border-color: #999; color: #555; }
+
+    /* Map layer toggle header */
+    #map-controls {
+      display: flex;
+      gap: 1.25rem;
+      padding: 0.4rem 1rem;
+      background: #fafafa;
+      border-bottom: 1px solid #eee;
+      flex-shrink: 0;
+    }
+    #map-controls label {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      color: #444;
+      cursor: pointer;
+      user-select: none;
+    }
+    #map-controls input[type=checkbox] { cursor: pointer; }
+
+    #error-bar {
+      font-size: 0.75rem;
+      padding: 0 1rem;
+      color: #c0392b;
+      background: #fff0ee;
+      border-bottom: 1px solid #f5c6c0;
+      flex-shrink: 0;
+      overflow: hidden;
+      max-height: 0;
+      transition: max-height 0.15s ease, padding 0.15s ease;
+    }
+    #error-bar.visible {
+      max-height: 2.5rem;
+      padding: 0.35rem 1rem;
+    }
+
+    /* Leaflet attribution tweak */
+    .leaflet-control-attribution { font-size: 0.6rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Sfogliatrice WebAssembly Tessellation Test</h1>
+</header>
+
+<div id="config-bar">
+  <div class="slider-field">
+    <div class="slider-label">Strip width <span class="slider-val" id="strip_width_val">5,000</span> m</div>
+    <input type="range" id="strip_width" min="1000" max="20000" value="5000" step="100">
+  </div>
+  <div class="slider-field wide">
+    <div class="slider-label">Strip length <span class="slider-val"><span id="min_strip_length_val">5,000</span>–<span id="max_strip_length_val">50,000</span></span> m</div>
+    <div class="dual-range-wrap">
+      <div class="dual-track"><div class="dual-fill" id="strip_length_fill"></div></div>
+      <input type="range" id="min_strip_length" min="1000" max="100000" value="5000" step="500">
+      <input type="range" id="max_strip_length" min="1000" max="100000" value="50000" step="500">
+    </div>
+  </div>
+  <div class="slider-field">
+    <div class="slider-label">Min. overlap <span class="slider-val" id="min_overlap_val">200</span> m</div>
+    <input type="range" id="min_overlap" min="100" max="2000" value="200" step="10">
+  </div>
+  <div class="slider-field wide">
+    <div class="slider-label">Heading <span class="slider-val" id="heading_val">auto</span>
+      <label class="auto-label"><input type="checkbox" id="heading_auto" checked> auto</label>
+    </div>
+    <input type="range" id="heading" min="0" max="360" value="0" step="1" disabled>
+  </div>
+  <div id="advanced-wrap">
+    <button id="advanced-toggle" type="button">Advanced ▸</button>
+    <div id="advanced-fields" class="hidden">
+      <div class="field"><label>Expansion (m)</label><input type="number" id="expansion"              value="5000"></div>
+      <div class="field"><label>Shard density ratio</label><input type="number" id="shard_density_ratio" value="0.3" step="0.01"></div>
+      <div class="field"><label>Shard radius (m)</label><input type="number" id="shard_radius"        value="50000"></div>
+      <div class="field"><label>Inflation (m)</label><input type="number" id="inflation"              value="5000"></div>
+      <div class="field"><label>Force line targets</label><input type="checkbox" id="force_line_targets"></div>
+      <div class="field"><label>Force square coverages</label><input type="checkbox" id="force_square_coverages"></div>
+    </div>
+  </div>
+  <button id="run" disabled>Tessellate</button>
+</div>
+
+<div id="panels">
+<panel>
+  <div class="panel-label">GeoJSON input</div>
+  <div id="error-bar"></div>
+  <textarea id="input" spellcheck="false">{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {},
+            "geometry" : {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-15.6497238, 28.1656214], [-15.6538780, 28.1660073], [-15.6567192, 28.1634562],
+                        [-15.6599572, 28.1623486], [-15.6622950, 28.1599935], [-15.6665802, 28.1581064],
+                        [-15.6718269, 28.1597527], [-15.6739539, 28.1620014], [-15.6778771, 28.1622122],
+                        [-15.6813379, 28.1639527], [-15.6804634, 28.1671081], [-15.6831433, 28.1707165],
+                        [-15.6900308, 28.1704329], [-15.6934266, 28.1648693], [-15.6957847, 28.1653104],
+                        [-15.6982440, 28.1632727], [-15.7031084, 28.1644498], [-15.7056910, 28.1660686],
+                        [-15.7096972, 28.1647949], [-15.7083845, 28.1598555], [-15.7061657, 28.1574977],
+                        [-15.6997378, 28.1543031], [-15.6964420, 28.1519816], [-15.6969264, 28.1484923],
+                        [-15.6992517, 28.1476795], [-15.7031510, 28.1443538], [-15.7032239, 28.1421231],
+                        [-15.7002111, 28.1388660], [-15.6989901, 28.1350494], [-15.6996459, 28.1321948],
+                        [-15.7040554, 28.1312373], [-15.7045814, 28.1266242], [-15.7093137, 28.1214166],
+                        [-15.7052655, 28.1144474], [-15.7065674, 28.1101588], [-15.7121126, 28.1051245],
+                        [-15.7134573, 28.1009226], [-15.7092374, 28.1004237], [-15.7078245, 28.0972728],
+                        [-15.7071011, 28.0897593], [-15.7105242, 28.0861648], [-15.7121866, 28.0813317],
+                        [-15.7206051, 28.0723106], [-15.7203961, 28.0712367], [-15.7260154, 28.0670854],
+                        [-15.7311591, 28.0641588], [-15.7343358, 28.0643051], [-15.7366103, 28.0592759],
+                        [-15.7377261, 28.0549207], [-15.7408761, 28.0527619], [-15.7463349, 28.0516939],
+                        [-15.7507294, 28.0497017], [-15.7536047, 28.0473231], [-15.7554501, 28.0474746],
+                        [-15.7615441, 28.0449748], [-15.7655524, 28.0462096], [-15.7685393, 28.0404902],
+                        [-15.7678784, 28.0372630], [-15.7737320, 28.0311416], [-15.7790106, 28.0281110],
+                        [-15.7805556, 28.0250653], [-15.7847613, 28.0234893], [-15.7948206, 28.0179278],
+                        [-15.7985629, 28.0167306], [-15.8016270, 28.0172004], [-15.8058327, 28.0159881],
+                        [-15.8104504, 28.0177536], [-15.8140038, 28.0175490], [-15.8230167, 28.0132341],
+                        [-15.8200549, 28.0105778], [-15.8172829, 28.0050613], [-15.8193149, 28.0001877],
+                        [-15.8213499, 27.9982579], [-15.8207008, 27.9942784], [-15.8231276, 27.9878272],
+                        [-15.8270360, 27.9830078], [-15.8298481, 27.9774811], [-15.8332299, 27.9746992],
+                        [-15.8346547, 27.9701055], [-15.8329123, 27.9640788], [-15.8332556, 27.9593179],
+                        [-15.8309551, 27.9581633], [-15.8309983, 27.9529949], [-15.8282651, 27.9494221],
+                        [-15.8284706, 27.9411222], [-15.8300843, 27.9386353], [-15.8294619, 27.9319233],
+                        [-15.8316019, 27.9282971], [-15.8319453, 27.9230037], [-15.8338507, 27.9223970],
+                        [-15.8344687, 27.9163298], [-15.8330525, 27.9097844], [-15.8286751, 27.9065760],
+                        [-15.8248213, 27.9005306], [-15.8180227, 27.8929810], [-15.8154314, 27.8884236],
+                        [-15.8106249, 27.8760877], [-15.8065651, 27.8726052], [-15.8024796, 27.8647824],
+                        [-15.8011835, 27.8608973], [-15.7981439, 27.8562470], [-15.7986344, 27.8530508],
+                        [-15.7953642, 27.8513737], [-15.7951411, 27.8494006], [-15.7908349, 27.8451080],
+                        [-15.7918280, 27.8418569], [-15.7867039, 27.8338194], [-15.7811592, 27.8298725],
+                        [-15.7795285, 27.8304114], [-15.7764045, 27.8275061], [-15.7733425, 27.8221953],
+                        [-15.7669747, 27.8171802], [-15.7636881, 27.8179377], [-15.7537361, 27.8148046],
+                        [-15.7498702, 27.8079038], [-15.7453163, 27.8069093], [-15.7427886, 27.8043052],
+                        [-15.7420290, 27.8011392], [-15.7352521, 27.7975312], [-15.7311677, 27.7985743],
+                        [-15.7280225, 27.7956833], [-15.7285577, 27.7927407], [-15.7248029, 27.7907830],
+                        [-15.7230862, 27.7873300], [-15.7204533, 27.7865411], [-15.7160494, 27.7831250],
+                        [-15.7140911, 27.7844120], [-15.7103583, 27.7812095], [-15.7036281, 27.7769786],
+                        [-15.7009333, 27.7736059], [-15.6997931, 27.7705019], [-15.6954071, 27.7727899],
+                        [-15.6901835, 27.7713835], [-15.6871589, 27.7637720], [-15.6855617, 27.7634389],
+                        [-15.6838270, 27.7598400], [-15.6846668, 27.7563260], [-15.6808105, 27.7563615],
+                        [-15.6771698, 27.7541622], [-15.6729477, 27.7495859], [-15.6700115, 27.7545724],
+                        [-15.6637094, 27.7555811], [-15.6617132, 27.7566403], [-15.6572721, 27.7563038],
+                        [-15.6498528, 27.7536324], [-15.6469835, 27.7510194], [-15.6400145, 27.7508257],
+                        [-15.6345788, 27.7485546], [-15.6327214, 27.7462767], [-15.6280184, 27.7450599],
+                        [-15.6253837, 27.7470211], [-15.6218734, 27.7471015], [-15.6195630, 27.7489084],
+                        [-15.6107906, 27.7439984], [-15.6061771, 27.7391975], [-15.6024521, 27.7365006],
+                        [-15.5980501, 27.7347803], [-15.5914369, 27.7361907], [-15.5793568, 27.7355963],
+                        [-15.5710175, 27.7375321], [-15.5691665, 27.7389885], [-15.5681420, 27.7501721],
+                        [-15.5654210, 27.7582424], [-15.5626069, 27.7612304], [-15.5573082, 27.7639270],
+                        [-15.5484474, 27.7669218], [-15.5432301, 27.7666728], [-15.5383341, 27.7704006],
+                        [-15.5337285, 27.7702545], [-15.5329370, 27.7720560], [-15.5261791, 27.7774406],
+                        [-15.5168569, 27.7818370], [-15.5114848, 27.7804478], [-15.5083263, 27.7805769],
+                        [-15.5034275, 27.7833913], [-15.4954860, 27.7897422], [-15.4874952, 27.7927718],
+                        [-15.4795387, 27.7937816], [-15.4727206, 27.7938746], [-15.4661760, 27.7963897],
+                        [-15.4590594, 27.7981423], [-15.4462151, 27.7989340], [-15.4374930, 27.8006850],
+                        [-15.4298012, 27.8037522], [-15.4252528, 27.8072639], [-15.4225382, 27.8106992],
+                        [-15.4207371, 27.8178737], [-15.4233245, 27.8223587], [-15.4221205, 27.8259485],
+                        [-15.4225862, 27.8303958], [-15.4213625, 27.8330076], [-15.4184311, 27.8344550],
+                        [-15.4188726, 27.8395172], [-15.4140112, 27.8468793], [-15.4112533, 27.8482262],
+                        [-15.4079786, 27.8476923], [-15.4042992, 27.8486235], [-15.3976186, 27.8447840],
+                        [-15.3968066, 27.8456809], [-15.4032561, 27.8491976], [-15.3977746, 27.8567605],
+                        [-15.3952495, 27.8568130], [-15.3930389, 27.8550300], [-15.3894346, 27.8553066],
+                        [-15.3855756, 27.8585446], [-15.3867282, 27.8606062], [-15.3840473, 27.8646892],
+                        [-15.3866673, 27.8663927], [-15.3856192, 27.8713894], [-15.3806437, 27.8753061],
+                        [-15.3855098, 27.8782536], [-15.3898149, 27.8796535], [-15.3922263, 27.8835852],
+                        [-15.3938490, 27.8887902], [-15.3938295, 27.8914060], [-15.3905858, 27.8941114],
+                        [-15.3867559, 27.9019016], [-15.3857855, 27.9060068], [-15.3868353, 27.9110862],
+                        [-15.3859342, 27.9172639], [-15.3840857, 27.9207954], [-15.3844854, 27.9264752],
+                        [-15.3801130, 27.9304912], [-15.3782978, 27.9334039], [-15.3724800, 27.9357314],
+                        [-15.3696489, 27.9329895], [-15.3626989, 27.9298361], [-15.3597149, 27.9290739],
+                        [-15.3583884, 27.9307500], [-15.3588628, 27.9347883], [-15.3646392, 27.9389589],
+                        [-15.3680725, 27.9388452], [-15.3710422, 27.9440998], [-15.3777456, 27.9465034],
+                        [-15.3807590, 27.9501116], [-15.3769130, 27.9536001], [-15.3778051, 27.9556159],
+                        [-15.3816365, 27.9573886], [-15.3807142, 27.9616979], [-15.3789277, 27.9645656],
+                        [-15.3840651, 27.9671257], [-15.3822574, 27.9710074], [-15.3830462, 27.9732115],
+                        [-15.3807562, 27.9762421], [-15.3768327, 27.9768262], [-15.3754689, 27.9791829],
+                        [-15.3779246, 27.9835014], [-15.3747962, 27.9850013], [-15.3748325, 27.9876517],
+                        [-15.3707285, 27.9887315], [-15.3671056, 27.9919136], [-15.3748385, 27.9971046],
+                        [-15.3753512, 28.0002589], [-15.3735167, 28.0026001], [-15.3767389, 28.0057996],
+                        [-15.3774244, 28.0096130], [-15.3801441, 28.0115639], [-15.3812393, 28.0140388],
+                        [-15.3848266, 28.0164034], [-15.3849580, 28.0220895], [-15.3866059, 28.0271507],
+                        [-15.3972947, 28.0323461], [-15.3996202, 28.0343187], [-15.4055071, 28.0372536],
+                        [-15.4070447, 28.0398741], [-15.4152201, 28.0459699], [-15.4160355, 28.0478504],
+                        [-15.4134941, 28.0506843], [-15.4132593, 28.0535438], [-15.4160287, 28.0546499],
+                        [-15.4196336, 28.0609820], [-15.4168141, 28.0679928], [-15.4167888, 28.0712519],
+                        [-15.4136718, 28.0760863], [-15.4163291, 28.0842547], [-15.4155738, 28.0874578],
+                        [-15.4122006, 28.0912590], [-15.4110762, 28.0981039], [-15.4120458, 28.1039546],
+                        [-15.4147389, 28.1095971], [-15.4144098, 28.1105881], [-15.4206700, 28.1189725],
+                        [-15.4239761, 28.1216708], [-15.4274353, 28.1264256], [-15.4288573, 28.1303532],
+                        [-15.4256700, 28.1364312], [-15.4286876, 28.1363310], [-15.4276109, 28.1408240],
+                        [-15.4277079, 28.1467854], [-15.4172720, 28.1462555], [-15.4175182, 28.1287683],
+                        [-15.4121231, 28.1286947], [-15.4117863, 28.1367497], [-15.4154064, 28.1395640],
+                        [-15.4149610, 28.1429782], [-15.4116745, 28.1440715], [-15.4155626, 28.1470768],
+                        [-15.4123198, 28.1508391], [-15.4103592, 28.1508196], [-15.4102603, 28.1544277],
+                        [-15.4073027, 28.1540092], [-15.4068688, 28.1476141], [-15.4037436, 28.1502357],
+                        [-15.4036875, 28.1610906], [-15.3982284, 28.1613239], [-15.3986119, 28.1647310],
+                        [-15.4022433, 28.1667118], [-15.4047029, 28.1665521], [-15.4055441, 28.1689129],
+                        [-15.4032352, 28.1720378], [-15.4066255, 28.1778182], [-15.4090460, 28.1786656],
+                        [-15.4147709, 28.1774097], [-15.4189251, 28.1808445], [-15.4225163, 28.1809792],
+                        [-15.4255512, 28.1758435], [-15.4290182, 28.1760361], [-15.4313229, 28.1718323],
+                        [-15.4385438, 28.1695301], [-15.4417459, 28.1657853], [-15.4415865, 28.1630151],
+                        [-15.4333627, 28.1576965], [-15.4315801, 28.1514461], [-15.4331304, 28.1491075],
+                        [-15.4313105, 28.1477397], [-15.4319799, 28.1451439], [-15.4361341, 28.1406256],
+                        [-15.4371093, 28.1384132], [-15.4458769, 28.1315165], [-15.4515150, 28.1310435],
+                        [-15.4532917, 28.1282504], [-15.4592913, 28.1277205], [-15.4617836, 28.1282380],
+                        [-15.4683783, 28.1262066], [-15.4705322, 28.1276951], [-15.4719255, 28.1315506],
+                        [-15.4740198, 28.1319290], [-15.4789551, 28.1367656], [-15.4856413, 28.1352594],
+                        [-15.4906109, 28.1417760], [-15.4949882, 28.1428658], [-15.5008676, 28.1429794],
+                        [-15.5026529, 28.1455299], [-15.5076397, 28.1476716], [-15.5161369, 28.1478987],
+                        [-15.5208490, 28.1501766], [-15.5215013, 28.1529464], [-15.5293720, 28.1552166],
+                        [-15.5346764, 28.1521896], [-15.5406416, 28.1501236], [-15.5422810, 28.1479289],
+                        [-15.5458858, 28.1462564], [-15.5485809, 28.1466121], [-15.5567606, 28.1459310],
+                        [-15.5595501, 28.1469905], [-15.5617817, 28.1456510], [-15.5660561, 28.1465440],
+                        [-15.5710600, 28.1443492], [-15.5766304, 28.1451136], [-15.5793571, 28.1441226],
+                        [-15.5891788, 28.1472554], [-15.5970924, 28.1444249], [-15.6016415, 28.1450682],
+                        [-15.6084564, 28.1492685], [-15.6104391, 28.1473235], [-15.6143101, 28.1486479],
+                        [-15.6172541, 28.1542783], [-15.6206701, 28.1536880], [-15.6215971, 28.1571993],
+                        [-15.6251333, 28.1605137], [-15.6255882, 28.1630714], [-15.6297424, 28.1674450],
+                        [-15.6330727, 28.1678762], [-15.6371839, 28.1720983], [-15.6425913, 28.1669607],
+                        [-15.6475695, 28.1649252], [-15.6497238, 28.1656214]
+                    ]
+                ]
+            }
+        }
+    ]
+}</textarea>
+</panel>
+
+<div id="resizer"></div>
+
+<panel>
+  <div class="tab-bar">
+    <button class="active" data-tab="map">Map</button>
+    <button data-tab="raw">Raw</button>
+  </div>
+  <div id="tab-map" class="tab-content active">
+    <div id="map-controls">
+      <label><input type="checkbox" id="toggle-original" checked> Original</label>
+      <label><input type="checkbox" id="toggle-targets"> Targets</label>
+      <label><input type="checkbox" id="toggle-coverages" checked> Coverages</label>
+      <label><input type="checkbox" id="toggle-intermediates"> Intermediates</label>
+    </div>
+    <div id="map"></div>
+  </div>
+  <div id="tab-raw" class="tab-content">
+    <div id="output">—</div>
+  </div>
+</panel>
+</div><!-- #panels -->
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module">
+  import init, { tessellate } from './pkg/sfogliatrice.js';
+
+  // ── Map setup ──────────────────────────────────────────────────────────────
+  const map = L.map('map', { zoomControl: true }).setView([41.9, 12.5], 8);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 20,
+  }).addTo(map);
+
+  const LAYER_STYLE = { color: '#000', weight: 1.5, fillColor: '#000', fillOpacity: 0.12 };
+  const POINT_RADIUS = 6;
+
+  function geojsonLayer(fc) {
+    return L.geoJSON(fc, {
+      style: () => LAYER_STYLE,
+      pointToLayer: (_, latlng) =>
+        L.circleMarker(latlng, { ...LAYER_STYLE, radius: POINT_RADIUS }),
+    });
+  }
+
+  // One layer per data source; keyed by checkbox id suffix
+  const layers = { original: null, intermediates: null, coverages: null, targets: null };
+
+  function syncLayer(key) {
+    const checked = document.getElementById('toggle-' + key).checked;
+    const layer = layers[key];
+    if (!layer) return;
+    if (checked && !map.hasLayer(layer)) map.addLayer(layer);
+    if (!checked && map.hasLayer(layer)) map.removeLayer(layer);
+  }
+
+  ['original', 'targets', 'coverages', 'intermediates'].forEach(key => {
+    document.getElementById('toggle-' + key).addEventListener('change', () => syncLayer(key));
+  });
+
+  // ── Tabs ───────────────────────────────────────────────────────────────────
+  document.querySelectorAll('.tab-bar button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-bar button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+      if (btn.dataset.tab === 'map') map.invalidateSize();
+    });
+  });
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const runBtn    = document.getElementById('run');
+  const inputEl   = document.getElementById('input');
+  const outputEl  = document.getElementById('output');
+  const errorBar  = document.getElementById('error-bar');
+
+  function showError(msg) {
+    errorBar.textContent = msg;
+    errorBar.classList.add('visible');
+  }
+  function clearError() {
+    errorBar.textContent = '';
+    errorBar.classList.remove('visible');
+  }
+
+  function num(id) {
+    const v = parseFloat(document.getElementById(id).value);
+    return isNaN(v) ? undefined : v;
+  }
+  function bool(id) { return document.getElementById(id).checked; }
+  function heading() {
+    return document.getElementById('heading_auto').checked
+      ? undefined
+      : parseFloat(document.getElementById('heading').value);
+  }
+
+  // ── Slider setup ───────────────────────────────────────────────────────────
+  const fmt = n => Math.round(n).toLocaleString();
+
+  document.getElementById('strip_width').addEventListener('input', function () {
+    document.getElementById('strip_width_val').textContent = fmt(this.value);
+  });
+  document.getElementById('min_overlap').addEventListener('input', function () {
+    document.getElementById('min_overlap_val').textContent = fmt(this.value);
+  });
+
+  // Dual range — strip length
+  const dualMin  = document.getElementById('min_strip_length');
+  const dualMax  = document.getElementById('max_strip_length');
+  const dualFill = document.getElementById('strip_length_fill');
+
+  function updateDual() {
+    const lo = parseInt(dualMin.min), hi = parseInt(dualMax.max);
+    const pMin = (parseInt(dualMin.value) - lo) / (hi - lo) * 100;
+    const pMax = (parseInt(dualMax.value) - lo) / (hi - lo) * 100;
+    dualFill.style.left  = pMin + '%';
+    dualFill.style.width = (pMax - pMin) + '%';
+    document.getElementById('min_strip_length_val').textContent = fmt(dualMin.value);
+    document.getElementById('max_strip_length_val').textContent = fmt(dualMax.value);
+  }
+  dualMin.addEventListener('input', () => {
+    if (parseInt(dualMin.value) > parseInt(dualMax.value)) dualMin.value = dualMax.value;
+    updateDual();
+  });
+  dualMax.addEventListener('input', () => {
+    if (parseInt(dualMax.value) < parseInt(dualMin.value)) dualMax.value = dualMin.value;
+    updateDual();
+  });
+
+  // Raise whichever thumb the cursor is nearest to, so it captures the click
+  dualMin.closest('.dual-range-wrap').addEventListener('mousemove', e => {
+    const rect = dualMin.closest('.dual-range-wrap').getBoundingClientRect();
+    const pos    = (e.clientX - rect.left) / rect.width;
+    const lo     = parseInt(dualMin.min), hi = parseInt(dualMax.max);
+    const minPos = (parseInt(dualMin.value) - lo) / (hi - lo);
+    const maxPos = (parseInt(dualMax.value) - lo) / (hi - lo);
+    dualMin.style.zIndex = Math.abs(pos - minPos) <= Math.abs(pos - maxPos) ? '3' : '1';
+  });
+
+  updateDual();
+
+  // Heading toggle
+  const headingAuto   = document.getElementById('heading_auto');
+  const headingSlider = document.getElementById('heading');
+  const headingVal    = document.getElementById('heading_val');
+
+  function updateHeading() {
+    const isAuto = headingAuto.checked;
+    headingSlider.disabled = isAuto;
+    headingVal.textContent = isAuto ? 'auto' : Math.round(headingSlider.value) + '°';
+  }
+  headingAuto.addEventListener('change', updateHeading);
+  headingSlider.addEventListener('input', updateHeading);
+
+  // ── Panel resizer ──────────────────────────────────────────────────────────
+  const resizer   = document.getElementById('resizer');
+  const leftPanel = resizer.previousElementSibling;
+
+  resizer.addEventListener('mousedown', e => {
+    e.preventDefault();
+    resizer.classList.add('dragging');
+    document.body.classList.add('resizing');
+
+    const startX     = e.clientX;
+    const startWidth = leftPanel.getBoundingClientRect().width;
+    const minWidth   = 200;
+    const maxWidth   = () => document.getElementById('panels').getBoundingClientRect().width - resizer.offsetWidth - minWidth;
+
+    function onMove(e) {
+      const w = Math.max(minWidth, Math.min(maxWidth(), startWidth + e.clientX - startX));
+      leftPanel.style.flex = `0 0 ${w}px`;
+      map.invalidateSize();
+    }
+    function onUp() {
+      resizer.classList.remove('dragging');
+      document.body.classList.remove('resizing');
+      map.invalidateSize();
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  // ── Advanced toggle ────────────────────────────────────────────────────────
+  document.getElementById('advanced-toggle').addEventListener('click', () => {
+    const fields = document.getElementById('advanced-fields');
+    const btn = document.getElementById('advanced-toggle');
+    const closing = !fields.classList.contains('hidden');
+    fields.classList.toggle('hidden', closing);
+    btn.textContent = closing ? 'Advanced ▸' : 'Advanced ▾';
+  });
+
+  // ── Run ────────────────────────────────────────────────────────────────────
+  function run() {
+    clearError();
+    let geojson;
+    try {
+      geojson = JSON.parse(inputEl.value);
+    } catch (e) {
+      showError('JSON parse error: ' + e.message);
+      return;
+    }
+
+    let result;
+    try {
+      result = tessellate(
+        geojson,
+        num('strip_width'), num('min_strip_length'), num('max_strip_length'),
+        num('min_overlap'), num('expansion'), num('shard_density_ratio'),
+        num('shard_radius'), num('inflation'),
+        bool('force_line_targets'), bool('force_square_coverages'),
+        heading(),
+      );
+    } catch (e) {
+      showError(String(e));
+      return;
+    }
+
+    outputEl.textContent = JSON.stringify(result, null, 2);
+
+    // ── Map layers ────────────────────────────────────────────────────────────
+    Object.values(layers).forEach(l => { if (l) map.removeLayer(l); });
+
+    layers.original      = L.geoJSON(geojson, { style: () => LAYER_STYLE, pointToLayer: (_, ll) => L.circleMarker(ll, { ...LAYER_STYLE, radius: POINT_RADIUS }) });
+    layers.intermediates = geojsonLayer(result.intermediates);
+    layers.coverages     = geojsonLayer(result.coverages);
+    layers.targets       = geojsonLayer(result.targets);
+
+    ['original', 'intermediates', 'coverages', 'targets'].forEach(key => syncLayer(key));
+
+    // Zoom to all features (use original + targets as the meaningful bounds)
+    const bounds = L.latLngBounds([]);
+    Object.values(layers).forEach(l => {
+      try { bounds.extend(l.getBounds()); } catch (_) { /* empty */ }
+    });
+    if (bounds.isValid()) map.fitBounds(bounds, { padding: [24, 24] });
+  }
+
+  runBtn.addEventListener('click', run);
+  inputEl.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') run();
+  });
+
+  // ── Auto-run on any input change ──────────────────────────────────────────
+  function debounce(fn, ms) {
+    let t;
+    return () => { clearTimeout(t); t = setTimeout(fn, ms); };
+  }
+  const debouncedRun = debounce(run, 400);
+  const debouncedRunSlow = debounce(run, 800);
+
+  document.querySelectorAll('#config-bar input').forEach(el => {
+    el.addEventListener('input', debouncedRun);
+  });
+  inputEl.addEventListener('input', debouncedRunSlow);
+
+  // ── WASM init ─────────────────────────────────────────────────────────────
+  try {
+    await init();
+    runBtn.disabled = false;
+    run();
+  } catch (e) {
+    showError('Failed to load WASM: ' + e);
+    console.error(e);
+  }
+</script>
+</body>
+</html>
