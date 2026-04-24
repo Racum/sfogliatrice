@@ -15,11 +15,14 @@ fn main() {
     });
 
     // Set your tessellation options:
-    let config = Config { strip_width: 10_000.0, ..Config::default() };
+    let config = Config {
+        strip_width: 10_000.0,
+        ..Config::default()
+    };
 
     // Run tessellation:
     let result = tessellate_geojson(&geojson, &config);
 
     // Use the results:
-    println!("Targets: {}", result.targets.len()); 
+    println!("Targets: {}", result.targets.len());
 }
