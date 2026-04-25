@@ -1,46 +1,10 @@
-use geo::{Coord, LineString, Point, Polygon};
 use js_sys::JSON;
-use serde::Serialize;
 use serde_json::Value;
 use sfogliatrice_lib::defaults::{
     DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_SHARD_RADIUS, DEFAULT_STRIP_WIDTH, DEFAULT_TARGET_EXPANSION,
 };
-use sfogliatrice_lib::{Config, Target, tessellate_geojson};
+use sfogliatrice_lib::{Config, tessellate_geojson_to_geojson};
 use wasm_bindgen::prelude::*;
-
-#[derive(Serialize)]
-struct WasmResult {
-    targets: Value,
-    coverages: Value,
-    intermediates: Value,
-}
-
-fn coords_to_vec(coords: &[Coord<f64>]) -> Vec<Vec<f64>> {
-    coords.iter().map(|c| vec![c.x, c.y]).collect()
-}
-
-fn feature(geometry: Value) -> Value {
-    serde_json::json!({"type": "Feature", "geometry": geometry, "properties": null})
-}
-
-fn feature_collection(features: Vec<Value>) -> Value {
-    serde_json::json!({"type": "FeatureCollection", "features": features})
-}
-
-fn polygon_to_feature(poly: Polygon<f64>) -> Value {
-    let mut rings = vec![coords_to_vec(&poly.exterior().0)];
-    rings.extend(poly.interiors().iter().map(|r| coords_to_vec(&r.0)));
-    feature(serde_json::json!({"type": "Polygon", "coordinates": rings}))
-}
-
-fn target_to_feature(target: Target) -> Value {
-    match target {
-        Target::Point(Point(c)) => feature(serde_json::json!({"type": "Point", "coordinates": [c.x, c.y]})),
-        Target::Line(LineString(coords)) => {
-            feature(serde_json::json!({"type": "LineString", "coordinates": coords_to_vec(&coords)}))
-        }
-    }
-}
 
 /// Tessellate a GeoJSON geometry into targets, coverages, and intermediates.
 ///
@@ -49,16 +13,16 @@ fn target_to_feature(target: Target) -> Value {
 ///
 /// # Arguments
 /// - `geojson` – GeoJSON object (any geometry, feature, or feature collection)
-/// - `strip_width` – width of each survey strip (default: 5 000 m)
-/// - `min_strip_length` – minimum strip length before merging (default: 5 000 m)
-/// - `max_strip_length` – maximum strip length before splitting (default: 50 000 m)
-/// - `min_overlap` – minimum overlap between adjacent strips (default: 200 m)
-/// - `expansion` – outward expansion applied to point targets (default: 5 000 m)
-/// - `shard_density_ratio` – internal shard density ratio (default: 0.3)
-/// - `shard_radius` – radius used for shard clustering (default: 50 000 m)
-/// - `force_line_targets` – always produce line targets even for small geometries (default: false)
-/// - `force_square_coverages` – always produce square coverage boxes (default: false)
-/// - `heading` – fixed heading angle in degrees, or `undefined` for auto (default: undefined)
+/// - `strip_width` – Width of each survey strip, in meters. (default: 5 000 m)
+/// - `min_strip_length` – Minimum strip length before two strips are merged, in meters. (default: 5 000 m)
+/// - `max_strip_length` – Maximum strip length before a strip is split, in meters. (default: 50 000 m)
+/// - `min_overlap` – Minimum overlap between adjacent strips, in meters. (default: 200 m)
+/// - `expansion` – Buffer applied to Points and LineStrings before merging, in meters. (default: 5 000 m)
+/// - `shard_density_ratio` – Fraction of `shard_radius` used as the grid cell size when sharding large intermediates. (default: 0.3)
+/// - `shard_radius` – Maximum radius of a shard cluster before an intermediate is split, in meters. (default: 50 000 m)
+/// - `force_line_targets` – Always emit line targets even when the geometry is small enough for a point target. (default: false)
+/// - `force_square_coverages` – Always emit square coverage for Points instead of circles. (default: false)
+/// - `heading` – Fixed strip heading in degrees; empty lets the algorithm choose the optimal angle. (default: undefined)
 #[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn tessellate(
@@ -100,14 +64,8 @@ pub fn tessellate(
         config.shard_density_ratio = v;
     }
 
-    let result = tessellate_geojson(&geojson_value, &config);
+    let result = tessellate_geojson_to_geojson(&geojson_value, &config);
 
-    let wasm_result = WasmResult {
-        targets: feature_collection(result.targets.into_iter().map(target_to_feature).collect()),
-        coverages: feature_collection(result.coverages.into_iter().map(polygon_to_feature).collect()),
-        intermediates: feature_collection(result.intermediates.into_iter().map(polygon_to_feature).collect()),
-    };
-
-    let output_str = serde_json::to_string(&wasm_result).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let output_str = serde_json::to_string(&result).map_err(|e| JsValue::from_str(&e.to_string()))?;
     JSON::parse(&output_str).map_err(|_| JsValue::from_str("failed to parse output JSON"))
 }

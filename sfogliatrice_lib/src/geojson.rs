@@ -89,10 +89,15 @@ pub fn feature(geometry: &Value) -> Value {
     json!({"type": "Feature", "properties": {}, "geometry": geometry})
 }
 
+/// Returns a FeatureCollection wrapping the given features.
+pub fn feature_collection(features: Vec<Value>) -> Value {
+    json!({"type": "FeatureCollection", "features": features})
+}
+
 /// Returns a FeatureCollection with features collected from multiple GeoJSON objects.
 pub fn combine_geojson(geojsons: &[Value]) -> Value {
     let features: Vec<Value> = geojsons.iter().flat_map(iterate_geojson).map(|g| feature(&g)).collect();
-    json!({"type": "FeatureCollection", "features": features})
+    feature_collection(features)
 }
 
 /// Iterates over features reducing the precision of their coordinates.
@@ -302,5 +307,24 @@ mod tests {
         assert_eq!(f["type"], "Feature");
         assert_eq!(f["geometry"], geom);
         assert!(f["properties"].is_object());
+    }
+
+    #[test]
+    fn test_feature_collection_shape() {
+        let f1 = feature(&json!({ "type": "Point", "coordinates": [0., 0.] }));
+        let f2 = feature(&json!({ "type": "Point", "coordinates": [1., 1.] }));
+        let fc = feature_collection(vec![f1.clone(), f2.clone()]);
+        assert_eq!(fc["type"], "FeatureCollection");
+        let arr = fc["features"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], f1);
+        assert_eq!(arr[1], f2);
+    }
+
+    #[test]
+    fn test_feature_collection_empty() {
+        let fc = feature_collection(vec![]);
+        assert_eq!(fc["type"], "FeatureCollection");
+        assert_eq!(fc["features"].as_array().unwrap().len(), 0);
     }
 }

@@ -91,7 +91,7 @@ $ sfogliatrice -n -i fixtures/gran_canaria.geojson
 
 #### Full Precision
 
-As an optimization step, the tool reduces the precision of the coordinates to 6 decimal points, if you are having problems with that, or got an invalid GeoJSON output, try using the full precision with the option `-f`, `--full-precision`.
+As an optimization step, the tool reduces the precision of the coordinates to 6 decimal places, if you are having problems with that, or got an invalid GeoJSON output, try using the full precision with the option `-f`, `--full-precision`.
 
 ```bash
 $ sfogliatrice fixtures/gran_canaria.geojson | jq -c '.features[0].geometry.coordinates'
@@ -127,7 +127,7 @@ Notice the 45 degrees lines now:
 
 ### Installation
 
-To use Sfogliatrice as a library, you can simply install it via cargo:
+To use Sfogliatrice as a library, you can simply add it as a dependency via cargo:
 
 ```bash
 $ cargo add sfogliatrice_lib
@@ -165,7 +165,7 @@ From Serde GeoJSON:
 
 ```rust
 use serde_json::json;
-use sfogliatrice_lib::{Config, tessellate_geojson};
+use sfogliatrice_lib::{Config, tessellate_geojson_to_geo};
 
 fn main() {
     // Get your GeoJSON ready:
@@ -184,7 +184,7 @@ fn main() {
     let config = Config { strip_width: 10_000.0, ..Config::default() };
 
     // Run tessellation:
-    let result = tessellate_geojson(&geojson, &config);
+    let result = tessellate_geojson_to_geo(&geojson, &config);
 
     // Use the results:
     println!("Targets: {}", result.targets.len());  // Outputs: Targets: 10
@@ -217,14 +217,14 @@ $ rustup target add wasm32-unknown-unknown
 $ cargo install wasm-pack
 ```
 
-Than, on `sfogliatrice_wasm` folder, run:
+Then, on `sfogliatrice_wasm` folder, run:
 
 ```
 $ wasm-pack build --target web
 $ python3 -m http.server 8080
 ```
 
-That will build the WASM package and run a webserver, than, open the page http://localhost:8080/test.html
+That will build the WASM package and run a webserver, then open the page http://localhost:8080/test.html
 
 There is also an online demo here: https://racum.blog/sfogliatrice/
 

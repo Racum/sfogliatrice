@@ -12,7 +12,7 @@ use crate::geo_utils::{
 };
 use crate::intermediate::combine_polygons;
 use crate::projection::get_projection;
-use crate::types::{Config, Target, TessellationResult, TessellationTuple};
+use crate::types::{Config, Target, TessellationGeoJSONResult, TessellationGeoResult, TessellationTuple};
 
 /// Tessellates a single cartesian polygon according to the given config.
 fn tessellate_block(geometry: &Polygon, config: &Config) -> TessellationTuple {
@@ -116,9 +116,9 @@ pub fn tessellate_strategy(polygons: &[Polygon], config: &Config) -> Tessellatio
 }
 
 /// Tessellates a list of geodesic geometries according to the given config.
-pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationResult {
+pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationGeoResult {
     if geometries.is_empty() {
-        return TessellationResult {
+        return TessellationGeoResult {
             targets: vec![],
             coverages: vec![],
             intermediates: vec![],
@@ -139,7 +139,7 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationResul
         })
         .map(|r| Point::from(r.center()))
     else {
-        return TessellationResult {
+        return TessellationGeoResult {
             targets: vec![],
             coverages: vec![],
             intermediates: vec![],
@@ -147,7 +147,7 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationResul
     };
 
     let Some(transformer) = get_projection(&anchor) else {
-        return TessellationResult {
+        return TessellationGeoResult {
             targets: vec![],
             coverages: vec![],
             intermediates: vec![],
@@ -221,17 +221,36 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationResul
         .filter_map(&project_polygon_back)
         .collect();
 
-    TessellationResult {
+    TessellationGeoResult {
         targets,
         coverages,
         intermediates,
     }
 }
 
-/// Parses a GeoJSON Value and tessellates the contained geometries.
-pub fn tessellate_geojson(geojson: &Value, config: &Config) -> TessellationResult {
+/// Parses a GeoJSON Value and tessellates the contained geometries, returning geo objects.
+pub fn tessellate_geojson_to_geo(geojson: &Value, config: &Config) -> TessellationGeoResult {
     let geometries = crate::geojson::iterate_geometry_from_geojson(geojson);
     tessellate(&geometries, config)
+}
+
+/// Parses a GeoJSON Value, tessellates, and returns the result as GeoJSON FeatureCollections.
+pub fn tessellate_geojson_to_geojson(geojson: &Value, config: &Config) -> TessellationGeoJSONResult {
+    let r = tessellate_geojson_to_geo(geojson, config);
+    let polygon_feature =
+        |p: geo::Polygon| crate::geojson::feature(&crate::geojson::geometry_to_json(&Geometry::Polygon(p)));
+    let target_feature = |t: Target| {
+        let geom = match t {
+            Target::Point(p) => crate::geojson::geometry_to_json(&Geometry::Point(p)),
+            Target::Line(ls) => crate::geojson::geometry_to_json(&Geometry::LineString(ls)),
+        };
+        crate::geojson::feature(&geom)
+    };
+    TessellationGeoJSONResult {
+        targets: crate::geojson::feature_collection(r.targets.into_iter().map(target_feature).collect()),
+        coverages: crate::geojson::feature_collection(r.coverages.into_iter().map(polygon_feature).collect()),
+        intermediates: crate::geojson::feature_collection(r.intermediates.into_iter().map(polygon_feature).collect()),
+    }
 }
 
 #[cfg(test)]
@@ -248,7 +267,7 @@ mod tests {
         }
     }
 
-    fn assert_valid_tessellation(result: &TessellationResult) {
+    fn assert_valid_tessellation(result: &TessellationGeoResult) {
         assert!(
             result
                 .targets
@@ -512,7 +531,44 @@ mod tests {
                 ]],
             },
         });
-        let result = tessellate_geojson(&feat, &Config::default());
+        let result = tessellate_geojson_to_geo(&feat, &Config::default());
         assert!(!result.targets.is_empty(), "Feature-wrapped polygon should tessellate");
+    }
+
+    #[test]
+    fn test_tessellate_geojson_to_geojson_returns_feature_collections() {
+        let polygon = json!({
+            "type": "Polygon",
+            "coordinates": [[
+                [13.332607, 52.520232],
+                [13.378726, 52.520232],
+                [13.378726, 52.504324],
+                [13.332607, 52.504324],
+                [13.332607, 52.520232],
+            ]],
+        });
+        let result = tessellate_geojson_to_geojson(&polygon, &Config::default());
+        for field in [&result.targets, &result.coverages, &result.intermediates] {
+            assert_eq!(
+                field["type"], "FeatureCollection",
+                "each field must be a FeatureCollection"
+            );
+            assert!(
+                field["features"].as_array().is_some(),
+                "each field must have a features array"
+            );
+        }
+        assert!(
+            !result.targets["features"].as_array().unwrap().is_empty(),
+            "polygon must produce targets"
+        );
+        assert!(
+            !result.coverages["features"].as_array().unwrap().is_empty(),
+            "polygon must produce coverages"
+        );
+        assert!(
+            !result.intermediates["features"].as_array().unwrap().is_empty(),
+            "polygon must produce intermediates"
+        );
     }
 }

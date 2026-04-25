@@ -1,3 +1,6 @@
+use serde::Serialize;
+use serde_json::Value;
+
 use crate::defaults::{
     DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_MIN_STRIP_LENGTH, DEFAULT_SHARD_DENSITY_RATIO,
     DEFAULT_SHARD_RADIUS, DEFAULT_STRIP_WIDTH, DEFAULT_TARGET_EXPANSION,
@@ -143,10 +146,40 @@ impl Default for Config {
 }
 
 #[derive(Debug, Clone)]
-pub struct TessellationResult {
+pub struct TessellationGeoResult {
     pub targets: Vec<Target>,
     pub coverages: Vec<Polygon>,
     pub intermediates: Vec<Polygon>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TessellationGeoJSONResult {
+    pub targets: Value,
+    pub coverages: Value,
+    pub intermediates: Value,
+}
+
+impl TessellationGeoJSONResult {
+    /// Builds a single FeatureCollection from the selected output layers.
+    pub fn to_feature_collection(&self, targets: bool, coverages: bool, intermediates: bool) -> Value {
+        let mut features: Vec<Value> = vec![];
+        let extract = |fc: &Value| -> Vec<Value> {
+            fc["features"]
+                .as_array()
+                .expect("TessellationGeoJSONResult fields are always FeatureCollections")
+                .clone()
+        };
+        if intermediates {
+            features.extend(extract(&self.intermediates));
+        }
+        if coverages {
+            features.extend(extract(&self.coverages));
+        }
+        if targets {
+            features.extend(extract(&self.targets));
+        }
+        crate::geojson::feature_collection(features)
+    }
 }
 
 pub type TessellationTuple = (Vec<Target>, Vec<Polygon>);
@@ -309,5 +342,49 @@ mod tests {
             ConfigError::MinOverlapTooLarge.to_string(),
             "Minimum overlap must be less than half of --width."
         );
+    }
+
+    fn make_geojson_result() -> TessellationGeoJSONResult {
+        let fc = |labels: &[&str]| {
+            let features: Vec<serde_json::Value> = labels
+                .iter()
+                .map(|l| serde_json::json!({"type": "Feature", "properties": {"layer": l}, "geometry": null}))
+                .collect();
+            serde_json::json!({"type": "FeatureCollection", "features": features})
+        };
+        TessellationGeoJSONResult {
+            targets: fc(&["t1", "t2"]),
+            coverages: fc(&["c1"]),
+            intermediates: fc(&["i1"]),
+        }
+    }
+
+    #[test]
+    fn test_to_feature_collection_all_layers() {
+        let r = make_geojson_result();
+        let fc = r.to_feature_collection(true, true, true);
+        let features = fc["features"].as_array().unwrap();
+        assert_eq!(features.len(), 4);
+        assert_eq!(features[0]["properties"]["layer"], "i1");
+        assert_eq!(features[1]["properties"]["layer"], "c1");
+        assert_eq!(features[2]["properties"]["layer"], "t1");
+        assert_eq!(features[3]["properties"]["layer"], "t2");
+    }
+
+    #[test]
+    fn test_to_feature_collection_targets_only() {
+        let r = make_geojson_result();
+        let fc = r.to_feature_collection(true, false, false);
+        let features = fc["features"].as_array().unwrap();
+        assert_eq!(features.len(), 2);
+        assert_eq!(features[0]["properties"]["layer"], "t1");
+        assert_eq!(features[1]["properties"]["layer"], "t2");
+    }
+
+    #[test]
+    fn test_to_feature_collection_none_selected() {
+        let r = make_geojson_result();
+        let fc = r.to_feature_collection(false, false, false);
+        assert_eq!(fc["features"].as_array().unwrap().len(), 0);
     }
 }

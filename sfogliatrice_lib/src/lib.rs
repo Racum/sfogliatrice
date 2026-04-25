@@ -7,5 +7,5 @@ pub mod tessellation;
 pub mod types;
 
 // Re-export the primary public API.
-pub use tessellation::{tessellate, tessellate_geojson, tessellate_strategy};
-pub use types::{Config, ConfigError, Target, TessellationResult, TessellationTuple};
+pub use tessellation::{tessellate, tessellate_geojson_to_geo, tessellate_geojson_to_geojson, tessellate_strategy};
+pub use types::{Config, ConfigError, Target, TessellationGeoJSONResult, TessellationGeoResult, TessellationTuple};

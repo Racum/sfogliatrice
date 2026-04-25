@@ -1,5 +1,5 @@
 use serde_json::json;
-use sfogliatrice_lib::{Config, tessellate_geojson};
+use sfogliatrice_lib::{Config, tessellate_geojson_to_geo};
 
 fn main() {
     // Get your GeoJSON ready:
@@ -21,7 +21,7 @@ fn main() {
     };
 
     // Run tessellation:
-    let result = tessellate_geojson(&geojson, &config);
+    let result = tessellate_geojson_to_geo(&geojson, &config);
 
     // Use the results:
     println!("Targets: {}", result.targets.len());

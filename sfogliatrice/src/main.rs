@@ -1,12 +1,11 @@
 use clap::Parser;
-use geo::Geometry;
 use serde_json::{Value, json};
 use sfogliatrice_lib::defaults::{
     DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_STRIP_WIDTH, DEFAULT_TARGET_EXPANSION,
 };
-use sfogliatrice_lib::geojson::{combine_geojson, coord_precision, feature, geometry_to_json};
-use sfogliatrice_lib::tessellate_geojson;
-use sfogliatrice_lib::types::{Config, Target}; // ConfigError via Display on Config::new
+use sfogliatrice_lib::geojson::{combine_geojson, coord_precision};
+use sfogliatrice_lib::tessellate_geojson_to_geojson;
+use sfogliatrice_lib::types::Config; // ConfigError via Display on Config::new
 use std::fs;
 use std::io::{self, Read, Write};
 
@@ -144,7 +143,7 @@ fn run(cli: &Cli, input_str: &str) -> Result<RunOutput, String> {
     // works out to "show targets unless explicitly suppressed and not overridden by --all".
     let needs_tessellation = !cli.no_targets || cli.coverages || cli.intermediates || cli.all;
     let tessellated = if needs_tessellation {
-        Some(tessellate_geojson(&input_geojson, &config))
+        Some(tessellate_geojson_to_geojson(&input_geojson, &config))
     } else {
         None
     };
@@ -159,28 +158,13 @@ fn run(cli: &Cli, input_str: &str) -> Result<RunOutput, String> {
     }
 
     if let Some(ref t) = tessellated {
-        if cli.intermediates || cli.all {
-            output_features.extend(
-                t.intermediates
-                    .iter()
-                    .map(|g| feature(&geometry_to_json(&Geometry::Polygon(g.clone())))),
-            );
-        }
-        if cli.coverages || cli.all {
-            output_features.extend(
-                t.coverages
-                    .iter()
-                    .map(|g| feature(&geometry_to_json(&Geometry::Polygon(g.clone())))),
-            );
-        }
-        if !cli.no_targets || cli.all {
-            output_features.extend(t.targets.iter().map(|target| {
-                let geom = match target {
-                    Target::Point(p) => geometry_to_json(&Geometry::Point(*p)),
-                    Target::Line(ls) => geometry_to_json(&Geometry::LineString(ls.clone())),
-                };
-                feature(&geom)
-            }));
+        let fc = t.to_feature_collection(
+            !cli.no_targets || cli.all,
+            cli.coverages || cli.all,
+            cli.intermediates || cli.all,
+        );
+        if let Some(arr) = fc["features"].as_array() {
+            output_features.extend(arr.iter().cloned());
         }
     }
 
