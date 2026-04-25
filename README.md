@@ -208,7 +208,7 @@ pub struct Config {
 }
 ```
 
-### WebAssenbly Package
+### WebAssembly Package
 
 Before you build it, you need some requirements first:
 

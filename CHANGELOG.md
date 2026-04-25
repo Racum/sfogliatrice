@@ -8,7 +8,7 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- WebAssenbly Package.
+- WebAssembly Package.
 
 ### Changed
 
