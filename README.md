@@ -202,7 +202,6 @@ pub struct Config {
     pub expansion: f64,
     pub shard_density_ratio: f64,
     pub shard_radius: f64,
-    pub inflation: f64,
     pub force_line_targets: bool,
     pub force_square_coverages: bool,
     pub heading: Option<f64>,
@@ -226,6 +225,8 @@ $ python3 -m http.server 8080
 ```
 
 That will build the WASM package and run a webserver, than, open the page http://localhost:8080/test.html
+
+There is also an online demo here: https://racum.blog/sfogliatrice/
 
 ## Contributing
 

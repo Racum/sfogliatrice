@@ -3,10 +3,9 @@ use js_sys::JSON;
 use serde::Serialize;
 use serde_json::Value;
 use sfogliatrice_lib::defaults::{
-    DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_SHARD_RADIUS, DEFAULT_STRIP_WIDTH,
-    DEFAULT_TARGET_EXPANSION,
+    DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_SHARD_RADIUS, DEFAULT_STRIP_WIDTH, DEFAULT_TARGET_EXPANSION,
 };
-use sfogliatrice_lib::{tessellate_geojson, Config, Target};
+use sfogliatrice_lib::{Config, Target, tessellate_geojson};
 use wasm_bindgen::prelude::*;
 
 #[derive(Serialize)]
@@ -36,9 +35,7 @@ fn polygon_to_feature(poly: Polygon<f64>) -> Value {
 
 fn target_to_feature(target: Target) -> Value {
     match target {
-        Target::Point(Point(c)) => {
-            feature(serde_json::json!({"type": "Point", "coordinates": [c.x, c.y]}))
-        }
+        Target::Point(Point(c)) => feature(serde_json::json!({"type": "Point", "coordinates": [c.x, c.y]})),
         Target::Line(LineString(coords)) => {
             feature(serde_json::json!({"type": "LineString", "coordinates": coords_to_vec(&coords)}))
         }
@@ -62,6 +59,7 @@ fn target_to_feature(target: Target) -> Value {
 /// - `force_line_targets` – always produce line targets even for small geometries (default: false)
 /// - `force_square_coverages` – always produce square coverage boxes (default: false)
 /// - `heading` – fixed heading angle in degrees, or `undefined` for auto (default: undefined)
+#[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn tessellate(
     geojson: JsValue,
@@ -80,8 +78,7 @@ pub fn tessellate(
         .map_err(|_| JsValue::from_str("failed to stringify GeoJSON input"))?
         .as_string()
         .ok_or_else(|| JsValue::from_str("GeoJSON input is not a string"))?;
-    let geojson_value: Value =
-        serde_json::from_str(&input_str).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let geojson_value: Value = serde_json::from_str(&input_str).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     let mut config = Config::new(
         expansion.unwrap_or(DEFAULT_TARGET_EXPANSION),
@@ -96,8 +93,12 @@ pub fn tessellate(
     .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     // These two fields are not validated by Config::new; apply overrides if provided.
-    if let Some(v) = min_strip_length { config.min_strip_length = v; }
-    if let Some(v) = shard_density_ratio { config.shard_density_ratio = v; }
+    if let Some(v) = min_strip_length {
+        config.min_strip_length = v;
+    }
+    if let Some(v) = shard_density_ratio {
+        config.shard_density_ratio = v;
+    }
 
     let result = tessellate_geojson(&geojson_value, &config);
 
@@ -107,7 +108,6 @@ pub fn tessellate(
         intermediates: feature_collection(result.intermediates.into_iter().map(polygon_to_feature).collect()),
     };
 
-    let output_str =
-        serde_json::to_string(&wasm_result).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let output_str = serde_json::to_string(&wasm_result).map_err(|e| JsValue::from_str(&e.to_string()))?;
     JSON::parse(&output_str).map_err(|_| JsValue::from_str("failed to parse output JSON"))
 }
