@@ -228,6 +228,39 @@ That will build the WASM package and run a webserver, then open the page http://
 
 There is also an online demo here: https://racum.blog/sfogliatrice/
 
+### Python Package
+
+There is no PyPI release, but this can be installed directly from the repository. Rust must be installed first, then:
+
+```bash
+$ pip install "sfogliatrice @ git+https://github.com/racum/sfogliatrice.git#subdirectory=sfogliatrice_py"
+```
+
+Usage:
+
+```python
+import sfogliatrice
+
+result = sfogliatrice.tessellate(
+    geojson={"type": "Polygon", "coordinates": [[...]]},
+    strip_width=10_000,
+)
+```
+
+See [`sfogliatrice_py/example.py`](sfogliatrice_py/example.py) for a full example.
+
+If you want to develop, you need [maturin](https://www.maturin.rs) to build it:
+
+```
+cd sfogliatrice_py
+python3 -m venv .venv
+pip install maturin
+source .venv/bin/activate
+
+maturin develop
+python3 example.py
+```
+
 ## Contributing
 
 ### Code Contribution

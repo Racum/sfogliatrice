@@ -3,3 +3,6 @@
 .vscode/
 target
 drafts
+
+sfogliatrice_wasm/pkg
+sfogliatrice_py/.venv
