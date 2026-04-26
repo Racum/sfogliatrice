@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
+# [0.4.2] - 2026-04-26
+
+### Changed
+
+- Optimized WebAssembly output file size.
 
 ## [0.4.1] - 2026-04-25
 
