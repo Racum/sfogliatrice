@@ -15,7 +15,7 @@ repository = "https://github.com/racum/sfogliatrice"
 parallel = ["dep:rayon"]
 
 [dependencies]
-geo = "0.33.0"
+geo = { version = "0.33.0", default-features = false, features = ["earcut", "spade"] }
 geo-omerc = "0.2.0"
 geojson = { version = "1.0.0", features = ["geo-types"] }
 serde = { version = "1", features = ["derive"] }
