@@ -266,6 +266,15 @@
 
     /* Leaflet attribution tweak */
     .leaflet-control-attribution { font-size: 0.6rem; }
+
+    #map-footer {
+      padding: 0.3rem 1rem;
+      font-size: 0.75rem;
+      color: #666;
+      background: #fafafa;
+      border-top: 1px solid #eee;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -275,6 +284,10 @@
 </header>
 
 <div id="config-bar">
+  <div class="field">
+    <label>Brute force</label>
+    <input type="checkbox" id="brute_force">
+  </div>
   <div class="slider-field">
     <div class="slider-label">Strip width <span class="slider-val" id="strip_width_val">5,000</span> m</div>
     <input type="range" id="strip_width" min="1000" max="20000" value="5000" step="100">
@@ -473,6 +486,7 @@
       <label><input type="checkbox" id="toggle-intermediates"> Intermediates</label>
     </div>
     <div id="map"></div>
+    <div id="map-footer">—</div>
   </div>
   <div id="tab-raw" class="tab-content">
     <div id="output">—</div>
@@ -653,6 +667,47 @@
     btn.textContent = closing ? 'Advanced ▸' : 'Advanced ▾';
   });
 
+  // ── Area helpers ───────────────────────────────────────────────────────────
+  function ringArea(coords) {
+    let area = 0;
+    const n = coords.length;
+    for (let i = 0; i < n; i++) {
+      const [lng1, lat1] = coords[i].map(v => v * Math.PI / 180);
+      const [lng2, lat2] = coords[(i + 1) % n].map(v => v * Math.PI / 180);
+      area += (lng2 - lng1) * (2 + Math.sin(lat1) + Math.sin(lat2));
+    }
+    return Math.abs(area) * 6371000 * 6371000 / 2;
+  }
+
+  function featureCollectionArea(fc) {
+    let total = 0;
+    for (const f of (fc.features ?? [])) {
+      const g = f.geometry ?? f;
+      if (g.type === 'Polygon') {
+        total += ringArea(g.coordinates[0]);
+      } else if (g.type === 'MultiPolygon') {
+        for (const poly of g.coordinates) total += ringArea(poly[0]);
+      }
+    }
+    return total;
+  }
+
+  function updateFooter(inputGeojson, result, elapsedMs) {
+    const footer = document.getElementById('map-footer');
+    const targetCount = (result.targets?.features ?? []).length;
+    const inputArea = featureCollectionArea(
+      inputGeojson.type === 'FeatureCollection' ? inputGeojson : { features: [{ geometry: inputGeojson }] }
+    );
+    const coverageArea = featureCollectionArea(result.coverages);
+    const timePart = `${elapsedMs.toFixed(1)} ms`;
+    if (inputArea > 0) {
+      const fitting = (coverageArea / inputArea * 100).toFixed(1);
+      footer.textContent = `Targets: ${targetCount}. Fitting: ${fitting}%. Time: ${timePart}`;
+    } else {
+      footer.textContent = `Targets: ${targetCount}. Time: ${timePart}`;
+    }
+  }
+
   // ── Run ────────────────────────────────────────────────────────────────────
   function run() {
     clearError();
@@ -665,7 +720,9 @@
     }
 
     let result;
+    let elapsedMs;
     try {
+      const t0 = performance.now();
       result = tessellate(
         geojson,
         num('strip_width'), num('min_strip_length'), num('max_strip_length'),
@@ -673,7 +730,9 @@
         num('shard_radius'),
         bool('force_line_targets'), bool('force_square_coverages'),
         heading(),
+        bool('brute_force'),
       );
+      elapsedMs = performance.now() - t0;
     } catch (e) {
       showError(String(e));
       return;
@@ -697,6 +756,8 @@
       try { bounds.extend(l.getBounds()); } catch (_) { /* empty */ }
     });
     if (bounds.isValid()) map.fitBounds(bounds, { padding: [24, 24] });
+
+    updateFooter(geojson, result, elapsedMs);
   }
 
   runBtn.addEventListener('click', run);

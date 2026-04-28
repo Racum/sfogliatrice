@@ -39,6 +39,9 @@ pub struct Config {
     pub force_square_coverages: bool,
     /// Fixed strip heading in degrees; empty lets the algorithm choose the optimal angle.
     pub heading: Option<f64>,
+    /// When true and heading is None, iterate 0–179° and pick the heading that produces the
+    /// fewest targets (tiebreaker: lowest coverage overfitting vs the input area).
+    pub brute_force: bool,
 }
 
 /// Describes which parameter failed validation and why.
@@ -141,6 +144,7 @@ impl Default for Config {
             force_line_targets: false,
             force_square_coverages: false,
             heading: None,
+            brute_force: false,
         }
     }
 }
@@ -150,6 +154,16 @@ pub struct TessellationGeoResult {
     pub targets: Vec<Target>,
     pub coverages: Vec<Polygon>,
     pub intermediates: Vec<Polygon>,
+}
+
+impl TessellationGeoResult {
+    pub fn empty() -> Self {
+        Self {
+            targets: vec![],
+            coverages: vec![],
+            intermediates: vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -205,6 +219,7 @@ mod tests {
         assert!(!c.force_line_targets);
         assert!(!c.force_square_coverages);
         assert!(c.heading.is_none());
+        assert!(!c.brute_force);
     }
 
     #[test]

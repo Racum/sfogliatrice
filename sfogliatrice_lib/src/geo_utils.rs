@@ -6,7 +6,31 @@ use geo::{
     Validation, Winding, coord, point,
 };
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 use crate::defaults::{CIRCLE_EXPANSION_CORRECTION, ROUND_ANGLE};
+
+/// Precomputed convex-hull data for a polygon. Passing this into [`roll_lines`] avoids
+/// recomputing the hull, centroid, and bounding-box length on every brute-force heading call.
+pub struct ConvexHullCache {
+    pub hull: Polygon,
+    pub centroid: Point,
+    pub length: f64,
+}
+
+impl ConvexHullCache {
+    pub fn for_polygon(polygon: &Polygon) -> Option<Self> {
+        let hull = polygon.convex_hull();
+        let bbox = polygon.bounding_rect()?;
+        let centroid = hull.centroid()?;
+        Some(Self {
+            hull,
+            centroid,
+            length: 2.0 * (bbox.width() + bbox.height()),
+        })
+    }
+}
 
 /// Flattens an arbitrary geometry into its primitive leaf components: Points, LineStrings, and Polygons.
 /// Multi* and `GeometryCollection` types are unwrapped. Line, Rect, and Triangle are normalized to their
@@ -96,14 +120,24 @@ fn fix_geometry(geometry: &Geometry) -> Result<Geometry, ()> {
 /// Geometries for which the projection returns None are silently skipped.
 pub fn iterate_normalized_geometry<F>(geometries: &[Geometry], project: F) -> Vec<Geometry>
 where
-    F: Fn(&Geometry) -> Option<Geometry>,
+    F: Fn(&Geometry) -> Option<Geometry> + Send + Sync,
 {
-    geometries
-        .iter()
-        .flat_map(iterate_geometry)
-        .filter_map(|g| project(&g))
-        .filter_map(|g| fix_geometry(&g).ok())
-        .collect()
+    // Flatten lazily (cheap clones); then project + fix in parallel since both are independent.
+    let flat: Vec<Geometry> = geometries.iter().flat_map(iterate_geometry).collect();
+    #[cfg(feature = "parallel")]
+    {
+        flat.into_par_iter()
+            .filter_map(|g| project(&g))
+            .filter_map(|g| fix_geometry(&g).ok())
+            .collect()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        flat.into_iter()
+            .filter_map(|g| project(&g))
+            .filter_map(|g| fix_geometry(&g).ok())
+            .collect()
+    }
 }
 
 /// Returns the point on the polygon's convex hull that is furthest from `line`.
@@ -154,22 +188,29 @@ fn plot_line(center: &Point, length: f64, heading: f64) -> Line {
 /// Builds a rotated bounding rectangle aligned to `heading` by finding the extreme points
 /// of the convex hull along the parallel and perpendicular axes, then intersecting the four
 /// boundary lines to form the rectangle corners.
-fn rotated_envelope(geometry: &Geometry, heading: f64) -> Option<Polygon> {
+fn rotated_envelope(geometry: &Geometry, heading: f64, cache: Option<&ConvexHullCache>) -> Option<Polygon> {
     let Geometry::Polygon(source) = geometry else {
         return None;
     };
-    let hull = source.convex_hull();
-    let bbox = source.bounding_rect()?;
-    let length = 2.0 * (bbox.width() + bbox.height());
-    let centroid = hull.centroid()?;
+    // Use precomputed hull/centroid/length when available; otherwise compute fresh.
+    let owned_hull;
+    let (hull, centroid, length) = match cache {
+        Some(c) => (&c.hull, c.centroid, c.length),
+        None => {
+            owned_hull = source.convex_hull();
+            let bbox = source.bounding_rect()?;
+            let centroid = owned_hull.centroid()?;
+            (&owned_hull, centroid, 2.0 * (bbox.width() + bbox.height()))
+        }
+    };
 
     let ref_parallel = plot_line(&centroid, length, heading);
     let ref_perp = plot_line(&centroid, length, heading + 90.0);
 
-    let side1 = plot_line(&furthest_from_line(&hull, &ref_parallel), length, heading);
-    let side2 = plot_line(&furthest_from_line(&hull, &side1), length, heading);
-    let side3 = plot_line(&furthest_from_line(&hull, &ref_perp), length, heading + 90.0);
-    let side4 = plot_line(&furthest_from_line(&hull, &side3), length, heading + 90.0);
+    let side1 = plot_line(&furthest_from_line(hull, &ref_parallel), length, heading);
+    let side2 = plot_line(&furthest_from_line(hull, &side1), length, heading);
+    let side3 = plot_line(&furthest_from_line(hull, &ref_perp), length, heading + 90.0);
+    let side4 = plot_line(&furthest_from_line(hull, &side3), length, heading + 90.0);
 
     let c0 = lines_intersection(&side1, &side3)?;
     let c1 = lines_intersection(&side2, &side3)?;
@@ -192,13 +233,17 @@ fn rotated_envelope(geometry: &Geometry, heading: f64) -> Option<Polygon> {
 /// When `heading` is `Some`, a rotated envelope aligned to that heading is used;
 /// otherwise the minimum rotated rectangle is used.
 /// Returns None if the geometry is degenerate (e.g. a single point or collinear set of points).
-pub fn get_rectangular_boundary_lines(geometry: &Geometry, heading: Option<f64>) -> Option<[Line; 4]> {
+pub fn get_rectangular_boundary_lines(
+    geometry: &Geometry,
+    heading: Option<f64>,
+    cache: Option<&ConvexHullCache>,
+) -> Option<[Line; 4]> {
     if let Some(mut angle) = heading {
         // Exact multiples of 90° cause degenerate perpendicular line intersections; nudge slightly.
         if (angle % 360.0) % 90.0 == 0.0 {
             angle += 0.000001;
         }
-        let rect = rotated_envelope(geometry, angle)?;
+        let rect = rotated_envelope(geometry, angle, cache)?;
         rect.exterior().lines().take(4).collect::<Vec<_>>().try_into().ok()
     } else {
         let mbr = MinimumRotatedRect::minimum_rotated_rect(geometry)?;
@@ -239,8 +284,8 @@ pub fn sort_by_highest_line(lines: [Line; 2]) -> [Line; 2] {
 /// When `heading` is `Some`, the rectangle is aligned to that angle and the sides
 /// perpendicular to it are chosen; otherwise the minimum rotated rectangle is used.
 /// Returns None if the geometry is degenerate and has no well-defined bounding rectangle.
-pub fn roll_lines(geometry: &Geometry, heading: Option<f64>) -> Option<[Line; 2]> {
-    let boundary_lines = get_rectangular_boundary_lines(geometry, heading)?;
+pub fn roll_lines(geometry: &Geometry, heading: Option<f64>, cache: Option<&ConvexHullCache>) -> Option<[Line; 2]> {
+    let boundary_lines = get_rectangular_boundary_lines(geometry, heading, cache)?;
     let shorter_boundary_lines = get_rectangular_shorter_sides(boundary_lines, heading);
     let shorter_boundary_lines_pointing_down = ensure_lines_pointing_down(shorter_boundary_lines);
     Some(sort_by_highest_line(shorter_boundary_lines_pointing_down))
@@ -325,7 +370,7 @@ pub fn intersect_line(geometry: &Polygon, full_line: &Line, strip_width: f64, mi
     if intersected_polygon.is_empty() {
         return None;
     }
-    let Some([roll_from, roll_to]) = roll_lines(&Geometry::Polygon(full_strip), None) else {
+    let Some([roll_from, roll_to]) = roll_lines(&Geometry::Polygon(full_strip), None, None) else {
         return Some(*full_line);
     };
     let leading_distance = Euclidean.distance(&intersected_polygon, &roll_from);

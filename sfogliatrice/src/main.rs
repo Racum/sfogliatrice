@@ -76,6 +76,10 @@ struct Cli {
     #[arg(long = "heading")]
     heading: Option<f64>,
 
+    /// Try many headings for better results.
+    #[arg(short = 'b', long = "brute-force")]
+    brute_force: bool,
+
     /// Print version information.
     #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
     version: (),
@@ -124,7 +128,7 @@ fn run(cli: &Cli, input_str: &str) -> Result<RunOutput, String> {
         return Err(format!("--heading must be a finite number, got {angle}."));
     }
 
-    let config = Config::new(
+    let mut config = Config::new(
         cli.expansion,
         cli.width,
         cli.max_length,
@@ -136,6 +140,7 @@ fn run(cli: &Cli, input_str: &str) -> Result<RunOutput, String> {
         cli.heading,
     )
     .map_err(|e| e.to_string())?;
+    config.brute_force = cli.brute_force;
 
     // Flag precedence: targets are shown by default; `--no-targets` hides them; `--all` overrides
     // `--no-targets` and forces every output (targets + coverages + intermediates + original).

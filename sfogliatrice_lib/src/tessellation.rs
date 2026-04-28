@@ -1,23 +1,28 @@
 use geo::algorithm::buffer::{BufferStyle, LineCap, LineJoin};
 use geo::{
-    BoundingRect, Buffer, Coord, Euclidean, Geometry, Length, Line, LineString, Point, Polygon, Rect, Simplify, coord,
+    Area, BoundingRect, Buffer, Coord, Euclidean, Geometry, Length, Line, LineString, Point, Polygon, Rect, Simplify,
+    coord,
 };
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use serde_json::Value;
 
 use crate::defaults::ROUND_ANGLE;
 use crate::geo_utils::{
-    coerce_to_polygon, count_lines, distribute_points, ensure_line_length, intersect_line, is_too_small,
-    iterate_normalized_geometry, iterate_shards, polygon_ccw_no_holes, project_strip, roll_lines, segment_lines,
+    ConvexHullCache, coerce_to_polygon, count_lines, distribute_points, ensure_line_length, intersect_line,
+    is_too_small, iterate_normalized_geometry, iterate_shards, polygon_ccw_no_holes, project_strip, roll_lines,
+    segment_lines,
 };
 use crate::intermediate::combine_polygons;
 use crate::projection::get_projection;
 use crate::types::{Config, Target, TessellationGeoJSONResult, TessellationGeoResult, TessellationTuple};
 
 /// Tessellates a single cartesian polygon according to the given config.
-fn tessellate_block(geometry: &Polygon, config: &Config) -> TessellationTuple {
-    if !config.force_line_targets && is_too_small(geometry, config.min_strip_length) {
-        let Some(bbox) = geometry.bounding_rect() else {
+fn tessellate_block(polygon: &Polygon, config: &Config, hull_cache: Option<&ConvexHullCache>) -> TessellationTuple {
+    if !config.force_line_targets && is_too_small(polygon, config.min_strip_length) {
+        let Some(bbox) = polygon.bounding_rect() else {
             return (vec![], vec![]);
         };
         let center = Point::new((bbox.min().x + bbox.max().x) / 2.0, (bbox.min().y + bbox.max().y) / 2.0);
@@ -51,7 +56,7 @@ fn tessellate_block(geometry: &Polygon, config: &Config) -> TessellationTuple {
         return (vec![Target::Point(center)], vec![coverage]);
     }
 
-    let Some([roll_from, roll_to]) = roll_lines(&Geometry::Polygon(geometry.clone()), config.heading) else {
+    let Some([roll_from, roll_to]) = roll_lines(&Geometry::Polygon(polygon.clone()), config.heading, hull_cache) else {
         return (vec![], vec![]);
     };
     let roll_from_length = Euclidean.length(&roll_from);
@@ -72,12 +77,12 @@ fn tessellate_block(geometry: &Polygon, config: &Config) -> TessellationTuple {
 
     let mut lines: Vec<Line> = full_lines
         .iter()
-        .filter_map(|l| intersect_line(geometry, l, config.strip_width, config.min_strip_length))
+        .filter_map(|l| intersect_line(polygon, l, config.strip_width, config.min_strip_length))
         .collect();
 
     lines = segment_lines(&lines, config.max_strip_length, config.strip_width)
         .into_iter()
-        .filter_map(|l| intersect_line(geometry, &l, config.strip_width, config.min_strip_length))
+        .filter_map(|l| intersect_line(polygon, &l, config.strip_width, config.min_strip_length))
         .collect();
 
     if number_of_lines == 1 && lines.is_empty() {
@@ -100,29 +105,165 @@ fn tessellate_block(geometry: &Polygon, config: &Config) -> TessellationTuple {
     (targets, strips)
 }
 
-/// Tessellates a list of cartesian polygons, applying the sharding strategy.
-/// **Polygons must be in metre space** — use [`tessellate`] for geodesic (lon/lat) input.
-pub fn tessellate_strategy(polygons: &[Polygon], config: &Config) -> TessellationTuple {
-    let mut targets: Vec<Target> = vec![];
-    let mut coverages: Vec<Polygon> = vec![];
-    for polygon in polygons {
-        for shard in iterate_shards(polygon, config.shard_radius, config.shard_density_ratio) {
-            let (block_targets, block_coverages) = tessellate_block(&shard, config);
-            targets.extend(block_targets);
-            coverages.extend(block_coverages);
-        }
+/// Tessellates one polygon, sweeping headings when brute-force is active and the auto heading
+/// produces more than one target. Delegates to [`tessellate_block`] otherwise.
+///
+/// Adaptive two-pass sweep: coarse (0°–165° / 15° steps, 12 candidates) then fine (±12° around
+/// the coarse winner / 3° steps, 8 candidates). Both passes are parallelised when the `parallel`
+/// feature is enabled. The convex hull is precomputed once and shared across all calls.
+fn tessellate_with_best_heading(polygon: &Polygon, config: &Config) -> TessellationTuple {
+    if !(config.brute_force && config.heading.is_none()) {
+        return tessellate_block(polygon, config, None);
     }
-    (targets, coverages)
+    let default = tessellate_block(polygon, config, None);
+    if default.0.len() <= 1 {
+        return default;
+    }
+
+    let hull_cache = ConvexHullCache::for_polygon(polygon);
+    let cache_ref = hull_cache.as_ref();
+    let sweep_base = config.clone();
+    let input_area = polygon.unsigned_area();
+
+    let compare = |a: &TessellationTuple, b: &TessellationTuple| -> std::cmp::Ordering {
+        a.0.len().cmp(&b.0.len()).then_with(|| {
+            if input_area == 0.0 {
+                return std::cmp::Ordering::Equal;
+            }
+            let ov = |cs: &[Polygon]| cs.iter().map(|p| p.unsigned_area()).sum::<f64>() / input_area;
+            ov(&a.1).partial_cmp(&ov(&b.1)).unwrap_or(std::cmp::Ordering::Equal)
+        })
+    };
+
+    let coarse: Vec<(u32, TessellationTuple)> = {
+        #[cfg(feature = "parallel")]
+        {
+            (0_u32..180)
+                .into_par_iter()
+                .step_by(15)
+                .map(|deg| {
+                    (
+                        deg,
+                        tessellate_block(
+                            polygon,
+                            &Config {
+                                heading: Some(f64::from(deg)),
+                                ..sweep_base.clone()
+                            },
+                            cache_ref,
+                        ),
+                    )
+                })
+                .collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            (0_u32..180)
+                .step_by(15)
+                .map(|deg| {
+                    (
+                        deg,
+                        tessellate_block(
+                            polygon,
+                            &Config {
+                                heading: Some(f64::from(deg)),
+                                ..sweep_base.clone()
+                            },
+                            cache_ref,
+                        ),
+                    )
+                })
+                .collect()
+        }
+    };
+
+    let winner_deg = coarse
+        .iter()
+        .min_by(|(_, a), (_, b)| compare(a, b))
+        .map(|(d, _)| *d)
+        .unwrap_or(0);
+    let fine_headings: Vec<u32> = (-4_i32..=4)
+        .filter(|&d| d != 0)
+        .map(|d| ((winner_deg as i32 + d * 3).rem_euclid(180)) as u32)
+        .collect();
+
+    let fine: Vec<TessellationTuple> = {
+        #[cfg(feature = "parallel")]
+        {
+            fine_headings
+                .into_par_iter()
+                .map(|deg| {
+                    tessellate_block(
+                        polygon,
+                        &Config {
+                            heading: Some(f64::from(deg)),
+                            ..sweep_base.clone()
+                        },
+                        cache_ref,
+                    )
+                })
+                .collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            fine_headings
+                .into_iter()
+                .map(|deg| {
+                    tessellate_block(
+                        polygon,
+                        &Config {
+                            heading: Some(f64::from(deg)),
+                            ..sweep_base.clone()
+                        },
+                        cache_ref,
+                    )
+                })
+                .collect()
+        }
+    };
+
+    coarse
+        .into_iter()
+        .map(|(_, t)| t)
+        .chain(fine)
+        .min_by(compare)
+        .unwrap_or_else(|| tessellate_block(polygon, config, cache_ref))
+}
+
+/// Tessellates cartesian polygons (metre space). Shards all inputs into a flat collection,
+/// then dispatches each to [`tessellate_with_best_heading`] — in parallel when `parallel` is enabled.
+pub fn tessellate_strategy(polygons: &[Polygon], config: &Config) -> TessellationTuple {
+    let polygons_flat: Vec<Polygon> = polygons
+        .iter()
+        .flat_map(|p| iterate_shards(p, config.shard_radius, config.shard_density_ratio))
+        .collect();
+
+    let combine = |(mut t, mut c): TessellationTuple, (bt, bc): TessellationTuple| -> TessellationTuple {
+        t.extend(bt);
+        c.extend(bc);
+        (t, c)
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        polygons_flat
+            .par_iter()
+            .map(|polygon| tessellate_with_best_heading(polygon, config))
+            .reduce(|| (vec![], vec![]), combine)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        polygons_flat
+            .iter()
+            .map(|polygon| tessellate_with_best_heading(polygon, config))
+            .fold((vec![], vec![]), combine)
+    }
 }
 
 /// Tessellates a list of geodesic geometries according to the given config.
 pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationGeoResult {
     if geometries.is_empty() {
-        return TessellationGeoResult {
-            targets: vec![],
-            coverages: vec![],
-            intermediates: vec![],
-        };
+        return TessellationGeoResult::empty();
     }
 
     // Anchor the Oblique Mercator projection at the bbox center of the inputs. Projection accuracy
@@ -139,19 +280,11 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationGeoRe
         })
         .map(|r| Point::from(r.center()))
     else {
-        return TessellationGeoResult {
-            targets: vec![],
-            coverages: vec![],
-            intermediates: vec![],
-        };
+        return TessellationGeoResult::empty();
     };
 
     let Some(transformer) = get_projection(&anchor) else {
-        return TessellationGeoResult {
-            targets: vec![],
-            coverages: vec![],
-            intermediates: vec![],
-        };
+        return TessellationGeoResult::empty();
     };
 
     // Project every input geometry from geodesic (degrees) to cartesian (meters).
@@ -180,46 +313,60 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationGeoRe
     let cartesian_intermediates = combine_polygons(&expanded, config.strip_width);
 
     // Tessellate each intermediate polygon into targets and coverages.
+    // Brute-force heading optimisation is handled inside tessellate_strategy, per shard.
     let (cartesian_targets, cartesian_coverages) = tessellate_strategy(&cartesian_intermediates, config);
 
-    // Enforce GeoJSON right-hand rule (CCW winding) on polygons.
+    // Enforce GeoJSON right-hand rule (CCW winding) on polygons — item 4.
+    #[cfg(feature = "parallel")]
+    let rhr_intermediates: Vec<Polygon> = cartesian_intermediates.par_iter().map(polygon_ccw_no_holes).collect();
+    #[cfg(not(feature = "parallel"))]
     let rhr_intermediates: Vec<Polygon> = cartesian_intermediates.iter().map(polygon_ccw_no_holes).collect();
+
+    #[cfg(feature = "parallel")]
+    let rhr_coverages: Vec<Polygon> = cartesian_coverages.par_iter().map(polygon_ccw_no_holes).collect();
+    #[cfg(not(feature = "parallel"))]
     let rhr_coverages: Vec<Polygon> = cartesian_coverages.iter().map(polygon_ccw_no_holes).collect();
 
-    // Project everything back to geodesic (lon/lat degrees).
-    let targets: Vec<Target> = cartesian_targets
-        .into_iter()
-        .filter_map(|t| match t {
-            Target::Point(p) => {
-                let g = transformer.to_geodesic(&Geometry::Point(p)).ok()?;
-                if let Geometry::Point(p) = g {
-                    Some(Target::Point(p))
-                } else {
-                    None
-                }
-            }
-            Target::Line(ls) => {
-                let g = transformer.to_geodesic(&Geometry::LineString(ls)).ok()?;
-                if let Geometry::LineString(ls) = g {
-                    Some(Target::Line(ls))
-                } else {
-                    None
-                }
-            }
-        })
-        .collect();
-
+    // Project everything back to geodesic (lon/lat degrees) — item 1.
+    let project_target_back = |t: Target| -> Option<Target> {
+        match t {
+            Target::Point(p) => match transformer.to_geodesic(&Geometry::Point(p)).ok()? {
+                Geometry::Point(p) => Some(Target::Point(p)),
+                _ => None,
+            },
+            Target::Line(ls) => match transformer.to_geodesic(&Geometry::LineString(ls)).ok()? {
+                Geometry::LineString(ls) => Some(Target::Line(ls)),
+                _ => None,
+            },
+        }
+    };
     let project_polygon_back = |p: Polygon| -> Option<Polygon> {
         match transformer.to_geodesic(&Geometry::Polygon(p)).ok()? {
             Geometry::Polygon(p) => Some(p),
             _ => None,
         }
     };
-    let coverages: Vec<Polygon> = rhr_coverages.into_iter().filter_map(&project_polygon_back).collect();
-    let intermediates: Vec<Polygon> = rhr_intermediates
-        .into_iter()
-        .filter_map(&project_polygon_back)
+
+    #[cfg(feature = "parallel")]
+    let targets: Vec<Target> = cartesian_targets
+        .into_par_iter()
+        .filter_map(project_target_back)
         .collect();
+    #[cfg(not(feature = "parallel"))]
+    let targets: Vec<Target> = cartesian_targets.into_iter().filter_map(project_target_back).collect();
+
+    #[cfg(feature = "parallel")]
+    let coverages: Vec<Polygon> = rhr_coverages.into_par_iter().filter_map(project_polygon_back).collect();
+    #[cfg(not(feature = "parallel"))]
+    let coverages: Vec<Polygon> = rhr_coverages.into_iter().filter_map(project_polygon_back).collect();
+
+    #[cfg(feature = "parallel")]
+    let intermediates: Vec<Polygon> = rhr_intermediates
+        .into_par_iter()
+        .filter_map(project_polygon_back)
+        .collect();
+    #[cfg(not(feature = "parallel"))]
+    let intermediates: Vec<Polygon> = rhr_intermediates.into_iter().filter_map(project_polygon_back).collect();
 
     TessellationGeoResult {
         targets,
@@ -497,6 +644,68 @@ mod tests {
             result.targets.iter().all(|t| matches!(t, Target::Line(_))),
             "force_line_targets must suppress Point targets"
         );
+    }
+
+    #[test]
+    fn test_brute_force_yields_valid_result() {
+        let polygon = json!({
+            "type": "Polygon",
+            "coordinates": [[
+                [13.332607, 52.520232],
+                [13.378726, 52.520232],
+                [13.378726, 52.504324],
+                [13.332607, 52.504324],
+                [13.332607, 52.520232],
+            ]],
+        });
+        let config = Config {
+            brute_force: true,
+            ..Config::default()
+        };
+        let result = tessellate(&geojson_to_geometries(&polygon), &config);
+        assert_valid_tessellation(&result);
+        assert!(!result.targets.is_empty(), "brute-force must produce targets");
+    }
+
+    #[test]
+    fn test_brute_force_ignored_when_heading_is_set() {
+        // Explicit heading wins: brute_force is a no-op when heading is Some.
+        let polygon = json!({
+            "type": "Polygon",
+            "coordinates": [[
+                [1.524868, 39.134803],
+                [1.294929, 39.069947],
+                [1.261153, 39.009406],
+                [1.142936, 38.994936],
+                [1.149432, 38.932310],
+                [1.191003, 38.913781],
+                [1.156793, 38.854118],
+                [1.200529, 38.829834],
+                [1.307054, 38.845013],
+                [1.359916, 38.808978],
+                [1.425597, 38.808645],
+                [1.439245, 38.871099],
+                [1.546295, 38.930179],
+                [1.564634, 38.966002],
+                [1.620079, 38.981918],
+                [1.636286, 39.010755],
+                [1.668273, 39.038256],
+                [1.616667, 39.108119],
+                [1.524868, 39.134803],
+            ]],
+        });
+        let config_bf = Config {
+            brute_force: true,
+            heading: Some(45.0),
+            ..Config::default()
+        };
+        let config_plain = Config {
+            heading: Some(45.0),
+            ..Config::default()
+        };
+        let r1 = tessellate(&geojson_to_geometries(&polygon), &config_bf);
+        let r2 = tessellate(&geojson_to_geometries(&polygon), &config_plain);
+        assert_eq!(r1.targets.len(), r2.targets.len());
     }
 
     #[test]

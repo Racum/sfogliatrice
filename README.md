@@ -42,6 +42,7 @@ Options:
       --line-targets               Force all targets as lines (no points)
       --square-coverages           Show point coverages as squares
       --heading <HEADING>          Target heading angle in degrees (0.0 means north to south)
+  -b, --brute-force                Try many headings for better results
   -v, --version                    Print version information
   -h, --help                       Print help
 ```
@@ -122,6 +123,14 @@ $ sfogliatrice --heading 45 fixtures/gran_canaria.geojson
 Notice the 45 degrees lines now:
 
 <img src="https://raw.githubusercontent.com/Racum/sfogliatrice/main/assets/gran_canaria_heading.png" width="400">
+
+#### Brute Force
+
+By default the strip heading comes from the geometry's minimum rotated rectangle, which is fast and works well for most inputs. Brute force goes further: it sweeps all possible headings, refines around the best one it finds, and picks whichever orientation produces the fewest targets. Each part of the geometry is optimised independently, so irregular or multi-part inputs benefit as much as simple ones. The result is the most compact survey plan possible, at the cost of noticeably more processing time on large inputs.
+
+```bash
+$ sfogliatrice -b fixtures/gran_canaria.geojson
+```
 
 ## Rust Library
 
@@ -205,6 +214,7 @@ pub struct Config {
     pub force_line_targets: bool,
     pub force_square_coverages: bool,
     pub heading: Option<f64>,
+    pub brute_force: bool,
 }
 ```
 
@@ -244,6 +254,7 @@ import sfogliatrice
 result = sfogliatrice.tessellate(
     geojson={"type": "Polygon", "coordinates": [[...]]},
     strip_width=10_000,
+    brute_force=True,
 )
 ```
 
@@ -254,8 +265,8 @@ If you want to develop, you need [maturin](https://www.maturin.rs) to build it:
 ```
 cd sfogliatrice_py
 python3 -m venv .venv
-pip install maturin
 source .venv/bin/activate
+pip install maturin
 
 maturin develop
 python3 example.py

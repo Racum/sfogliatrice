@@ -63,7 +63,7 @@ fn test_iterate_polygons() {
 #[test]
 fn test_get_boundary_lines() {
     let a_poly = polygon![(x: 0., y: 0.), (x: 2., y: 0.), (x: 1., y: 2.), (x: 0., y: 0.)];
-    let result = get_rectangular_boundary_lines(&Geometry::Polygon(a_poly), None).unwrap();
+    let result = get_rectangular_boundary_lines(&Geometry::Polygon(a_poly), None, None).unwrap();
     let lengths = result.map(|l| format!("{:.10}", Euclidean.length(&l)));
     assert_eq!(lengths[0], lengths[2]);
     assert_eq!(lengths[1], lengths[3]);
@@ -72,7 +72,7 @@ fn test_get_boundary_lines() {
 #[test]
 fn test_get_short_width_lines() {
     let a_poly = polygon![(x: 0., y: 0.), (x: 2., y: 0.), (x: 1., y: 2.), (x: 0., y: 0.)];
-    let input_lines = get_rectangular_boundary_lines(&Geometry::Polygon(a_poly), None).unwrap();
+    let input_lines = get_rectangular_boundary_lines(&Geometry::Polygon(a_poly), None, None).unwrap();
     let input_lines_lengths = input_lines.map(|l| format!("{:.10}", Euclidean.length(&l)));
     let result = get_rectangular_shorter_sides(input_lines, None);
     let result_lengths = result.map(|l| format!("{:.10}", Euclidean.length(&l)));
@@ -100,7 +100,7 @@ fn test_sort_by_highest_line() {
 #[test]
 fn test_roll_lines() {
     let a_poly = polygon![(x: 0., y: 0.), (x: 2., y: 0.), (x: 1., y: 2.), (x: 0., y: 0.)];
-    let result = roll_lines(&Geometry::Polygon(a_poly.clone()), None).unwrap();
+    let result = roll_lines(&Geometry::Polygon(a_poly.clone()), None, None).unwrap();
     assert_eq!(
         format!("{:.10}", Euclidean.length(&result[0])),
         format!("{:.10}", Euclidean.length(&result[1]))
@@ -766,13 +766,13 @@ fn test_furthest_from_centroid_degenerate_polygon() {
 #[test]
 fn test_get_rectangular_boundary_lines_degenerate_returns_none() {
     let single_point = Geometry::Point(point! { x: 0., y: 0. });
-    assert!(get_rectangular_boundary_lines(&single_point, None).is_none());
+    assert!(get_rectangular_boundary_lines(&single_point, None, None).is_none());
 }
 
 #[test]
 fn test_roll_lines_degenerate_returns_none() {
     let single_point = Geometry::Point(point! { x: 0., y: 0. });
-    assert!(roll_lines(&single_point, None).is_none());
+    assert!(roll_lines(&single_point, None, None).is_none());
 }
 
 #[test]
@@ -840,7 +840,7 @@ fn test_get_boundary_lines_with_heading() {
         (x: 0., y: 5_000.), (x: 0., y: 0.),
     ];
     for angle in [15.0_f64, 45.0, 60.0, 120.0] {
-        let result = get_rectangular_boundary_lines(&Geometry::Polygon(a_poly.clone()), Some(angle)).unwrap();
+        let result = get_rectangular_boundary_lines(&Geometry::Polygon(a_poly.clone()), Some(angle), None).unwrap();
         let lengths = result.map(|l| format!("{:.6}", Euclidean.length(&l)));
         assert_eq!(lengths[0], lengths[2], "opposite sides equal at angle {angle}");
         assert_eq!(lengths[1], lengths[3], "opposite sides equal at angle {angle}");
@@ -857,8 +857,8 @@ fn test_roll_lines_heading_changes_orientation() {
         (x: 0., y: 2_000.), (x: 0., y: 0.),
     ];
     let geo = Geometry::Polygon(a_poly);
-    let auto_lines = roll_lines(&geo, None).unwrap();
-    let angled_lines = roll_lines(&geo, Some(0.1)).unwrap();
+    let auto_lines = roll_lines(&geo, None, None).unwrap();
+    let angled_lines = roll_lines(&geo, Some(0.1), None).unwrap();
     let auto_len = Euclidean.length(&auto_lines[0]);
     let angled_len = Euclidean.length(&angled_lines[0]);
     assert!(
@@ -877,7 +877,7 @@ fn test_roll_lines_right_angle_multiples_dont_panic() {
     let geo = Geometry::Polygon(a_poly);
     for angle in [0.0_f64, 90.0, 180.0, 270.0, 360.0] {
         assert!(
-            roll_lines(&geo, Some(angle)).is_some(),
+            roll_lines(&geo, Some(angle), None).is_some(),
             "roll_lines must succeed for exact right-angle multiple {angle}"
         );
     }

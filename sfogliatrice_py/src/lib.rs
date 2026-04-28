@@ -2,8 +2,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pythonize::{depythonize, pythonize};
 use sfogliatrice_lib::defaults::{
-    DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_SHARD_RADIUS, DEFAULT_STRIP_WIDTH,
-    DEFAULT_TARGET_EXPANSION,
+    DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_SHARD_RADIUS, DEFAULT_STRIP_WIDTH, DEFAULT_TARGET_EXPANSION,
 };
 use sfogliatrice_lib::{Config, tessellate_geojson_to_geojson};
 
@@ -33,6 +32,8 @@ use sfogliatrice_lib::{Config, tessellate_geojson_to_geojson};
 ///     Always emit square coverage for Points instead of circles. (default: False)
 /// heading : float, optional
 ///     Fixed strip heading in degrees; None lets the algorithm choose the optimal angle. (default: None)
+/// brute_force : bool, optional
+///     Try all headings 0–179° and pick the one with fewest targets; slow but optimal. (default: False)
 ///
 /// Returns
 /// -------
@@ -52,6 +53,7 @@ use sfogliatrice_lib::{Config, tessellate_geojson_to_geojson};
     force_line_targets=None,
     force_square_coverages=None,
     heading=None,
+    brute_force=None,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn tessellate(
@@ -67,6 +69,7 @@ fn tessellate(
     force_line_targets: Option<bool>,
     force_square_coverages: Option<bool>,
     heading: Option<f64>,
+    brute_force: Option<bool>,
 ) -> PyResult<Py<PyAny>> {
     let geojson_value: serde_json::Value = if let Ok(s) = geojson.extract::<String>() {
         serde_json::from_str(&s).map_err(|e| PyValueError::new_err(e.to_string()))?
@@ -86,12 +89,15 @@ fn tessellate(
     )
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-    // These two fields are not validated by Config::new; apply overrides if provided.
+    // These fields are not validated by Config::new; apply overrides if provided.
     if let Some(v) = min_strip_length {
         config.min_strip_length = v;
     }
     if let Some(v) = shard_density_ratio {
         config.shard_density_ratio = v;
+    }
+    if let Some(v) = brute_force {
+        config.brute_force = v;
     }
 
     let result = tessellate_geojson_to_geojson(&geojson_value, &config);
