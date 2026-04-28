@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.5.1] - 2026-04-28
+
+### Fixed
+
+Fix unneeded convex_hull
+
 ## [0.5.0] - 2026-04-28
 
 ### Added

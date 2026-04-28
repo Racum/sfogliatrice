@@ -143,10 +143,8 @@ where
 /// Returns the point on the polygon's convex hull that is furthest from `line`.
 /// The reference lines passed here are always longer than the geometry (see `rotated_envelope`),
 /// so segment distance equals perpendicular distance for all real inputs.
-fn furthest_from_line(polygon: &Polygon, line: &Line) -> Point {
-    polygon
-        .convex_hull()
-        .exterior()
+fn furthest_from_line(hull: &Polygon, line: &Line) -> Point {
+    hull.exterior()
         .points()
         .max_by(|a, b| {
             Euclidean
