@@ -25,7 +25,7 @@ fn test_stdin_pipe() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let v: serde_json::Value = serde_json::from_str(&stdout).expect("output must be valid JSON");
     assert_eq!(v["type"], "FeatureCollection");
-    assert!(v["features"].as_array().unwrap().len() > 0);
+    assert!(!v["features"].as_array().unwrap().is_empty());
 }
 
 #[test]
