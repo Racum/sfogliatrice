@@ -133,6 +133,12 @@ By default the strip heading comes from the geometry's minimum rotated rectangle
 $ sfogliatrice -b fixtures/gran_canaria.geojson
 ```
 
+#### Polygon Holes
+
+When the input polygon(s) contains "holes" (interior rings), sfogliatrice respects them by default. Strips are clipped so they do not cover the hole area. If you want to ignore all holes and treat the polygon as solid, use `--ignore-holes`:
+
+<img src="https://raw.githubusercontent.com/Racum/sfogliatrice/main/assets/polygon_holes.png" width="700">
+
 ## Rust Library
 
 ### Installation
