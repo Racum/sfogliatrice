@@ -16,6 +16,6 @@ pub const DEFAULT_MIN_OVERLAP: f64 = 200.0; // In meters
 pub const DEFAULT_SHARD_RADIUS: f64 = 50_000.0; // In meters
 pub const DEFAULT_TARGET_EXPANSION: f64 = 5_000.0; // In meters
 
-// Calculates the angle in radians that makes a point buffered with LineJoin::Round return a Polygon with 36 vertices:
+// Step angle (radians) for Round buffer joins/caps, producing ROUND_VERTICES-sided polygons.
 pub const ROUND_VERTICES: usize = 36;
 pub const ROUND_ANGLE: f64 = PI / 180. * (360. / ROUND_VERTICES as f64);

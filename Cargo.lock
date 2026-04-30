@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "sfogliatrice"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "serde_json",
@@ -915,7 +915,7 @@ dependencies = [
 
 [[package]]
 name = "sfogliatrice_lib"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "geo",
  "geo-omerc",
@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "sfogliatrice_py"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "pyo3",
  "pythonize",
@@ -938,7 +938,7 @@ dependencies = [
 
 [[package]]
 name = "sfogliatrice_wasm"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "js-sys",
  "serde_json",

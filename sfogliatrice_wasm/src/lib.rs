@@ -24,6 +24,7 @@ use wasm_bindgen::prelude::*;
 /// - `force_square_coverages` – Always emit square coverage for Points instead of circles. (default: false)
 /// - `heading` – Fixed strip heading in degrees; empty lets the algorithm choose the optimal angle. (default: undefined)
 /// - `brute_force` – Try all headings 0–179° and pick the one with fewest targets; slow but optimal. (default: false)
+/// - `ignore_holes` – Ignore Polygon holes. (default: false)
 #[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn tessellate(
@@ -39,6 +40,7 @@ pub fn tessellate(
     force_square_coverages: Option<bool>,
     heading: Option<f64>,
     brute_force: Option<bool>,
+    ignore_holes: Option<bool>,
 ) -> Result<JsValue, JsValue> {
     let input_str = JSON::stringify(&geojson)
         .map_err(|_| JsValue::from_str("failed to stringify GeoJSON input"))?
@@ -67,6 +69,9 @@ pub fn tessellate(
     }
     if let Some(v) = brute_force {
         config.brute_force = v;
+    }
+    if let Some(v) = ignore_holes {
+        config.ignore_holes = v;
     }
 
     let result = tessellate_geojson_to_geojson(&geojson_value, &config);

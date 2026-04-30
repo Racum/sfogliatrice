@@ -1,7 +1,8 @@
 use geo::algorithm::buffer::{BufferStyle, LineCap, LineJoin};
+use geo::algorithm::unary_union;
 use geo::{
-    Area, BoundingRect, Buffer, Coord, Euclidean, Geometry, Length, Line, LineString, Point, Polygon, Rect, Simplify,
-    coord,
+    Area, BooleanOps, BoundingRect, Buffer, Coord, Euclidean, Geometry, Length, Line, LineString, MultiPolygon, Point,
+    Polygon, Rect, Simplify, Validation, coord,
 };
 
 #[cfg(feature = "parallel")]
@@ -12,58 +13,138 @@ use serde_json::Value;
 use crate::defaults::ROUND_ANGLE;
 use crate::geo_utils::{
     ConvexHullCache, coerce_to_polygon, count_lines, distribute_points, ensure_line_length, intersect_line,
-    is_too_small, iterate_normalized_geometry, iterate_shards, polygon_ccw_no_holes, project_strip, roll_lines,
-    segment_lines,
+    is_too_small, iterate_normalized_geometry, iterate_shards, project_strip, roll_lines, segment_lines,
 };
 use crate::intermediate::combine_polygons;
 use crate::projection::get_projection;
 use crate::types::{Config, Target, TessellationGeoJSONResult, TessellationGeoResult, TessellationTuple};
 
-/// Tessellates a single cartesian polygon according to the given config.
-fn tessellate_block(polygon: &Polygon, config: &Config, hull_cache: Option<&ConvexHullCache>) -> TessellationTuple {
-    if !config.force_line_targets && is_too_small(polygon, config.min_strip_length) {
-        let Some(bbox) = polygon.bounding_rect() else {
-            return (vec![], vec![]);
-        };
-        let center = Point::new((bbox.min().x + bbox.max().x) / 2.0, (bbox.min().y + bbox.max().y) / 2.0);
-        let coverage = if config.force_square_coverages {
-            // Square buffer: axis-aligned square at strip_width / 2 radius.
-            let r = config.strip_width / 2.0;
-            Polygon::new(
-                LineString::from(vec![
-                    coord! {x: center.x() - r, y: center.y() - r},
-                    coord! {x: center.x() + r, y: center.y() - r},
-                    coord! {x: center.x() + r, y: center.y() + r},
-                    coord! {x: center.x() - r, y: center.y() + r},
-                    coord! {x: center.x() - r, y: center.y() - r},
-                ]),
-                vec![],
-            )
+/// Extracts hole rings from `polygon`, applies simplify + inset, unions them, and returns the
+/// resulting void polygons ready to be used for line clipping. Returns empty when `ignore_holes`
+/// is set or there are no meaningful holes.
+fn hole_masks(polygon: &Polygon, config: &Config) -> MultiPolygon {
+    if config.ignore_holes {
+        return MultiPolygon::new(vec![]);
+    }
+    let transform = |h: Polygon| {
+        // MARKER: apply transformations to hole_polygons here.
+        // After transformation, re-filter: drop invalid and too-small results.
+        h.simplify(config.strip_width / 50.0)
+            .buffer_with_style(BufferStyle::new(-config.strip_width / 2.0))
+            .into_iter()
+            .filter(|h: &Polygon| h.is_valid() && !is_too_small(h, config.min_strip_length))
+            .collect::<Vec<_>>()
+    };
+
+    let ring_to_masks = |ring: &LineString| -> Vec<Polygon> {
+        let h = Polygon::new(ring.clone(), vec![]);
+        if !h.is_valid() || is_too_small(&h, config.min_strip_length) {
+            return vec![];
+        }
+        transform(h)
+    };
+
+    #[cfg(feature = "parallel")]
+    let masks: Vec<Polygon> = polygon.interiors().par_iter().flat_map_iter(ring_to_masks).collect();
+    #[cfg(not(feature = "parallel"))]
+    let masks: Vec<Polygon> = polygon.interiors().iter().flat_map(ring_to_masks).collect();
+    if masks.is_empty() {
+        return MultiPolygon::new(vec![]);
+    }
+    unary_union(masks.iter())
+}
+
+/// Clips `line` against `holes`, then bridges any gap smaller than `strip_width` back together.
+/// If the line falls entirely inside a hole but the hole is smaller than `strip_width`, the
+/// original line is returned unchanged.
+fn clip_line_by_holes(line: &Line, holes: &MultiPolygon, strip_width: f64) -> Vec<Line> {
+    use geo::MultiLineString;
+    let multi_line = MultiLineString::new(vec![LineString::from(*line)]);
+    let mut segs: Vec<Line> = holes
+        .clip(&multi_line, true)
+        .into_iter()
+        .filter_map(|s| Some(Line::new(s.points().next()?, s.points().next_back()?)))
+        .collect();
+
+    if segs.is_empty() {
+        return if Euclidean.length(line) < strip_width {
+            vec![*line]
         } else {
-            let Some(c) = center
-                .buffer_with_style(
-                    BufferStyle::new(config.strip_width / 2.0)
-                        .line_cap(LineCap::Round(ROUND_ANGLE))
-                        .line_join(LineJoin::Round(ROUND_ANGLE)),
-                )
-                .into_iter()
-                .next()
-            else {
-                return (vec![Target::Point(center)], vec![]);
-            };
-            c
+            vec![]
         };
-        return (vec![Target::Point(center)], vec![coverage]);
     }
 
+    // Sort by signed scalar projection onto the line direction so segment order is
+    // unambiguous regardless of what BooleanOps::clip returns.
+    let dx = line.end.x - line.start.x;
+    let dy = line.end.y - line.start.y;
+    let project = |c: Coord| (c.x - line.start.x) * dx + (c.y - line.start.y) * dy;
+    segs.sort_by(|a, b| {
+        project(a.start)
+            .partial_cmp(&project(b.start))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut result: Vec<Line> = Vec::with_capacity(segs.len());
+    let mut current = segs[0];
+    for next in segs.into_iter().skip(1) {
+        if Euclidean.length(&Line::new(current.end, next.start)) < strip_width {
+            current = Line::new(current.start, next.end);
+        } else {
+            result.push(current);
+            current = next;
+        }
+    }
+    result.push(current);
+    result
+}
+
+/// Returns a point-target result when `polygon` is too small for strip tessellation, or `None`
+/// when the polygon is large enough to proceed normally.
+fn try_as_point(polygon: &Polygon, config: &Config) -> Option<TessellationTuple> {
+    if config.force_line_targets || !is_too_small(polygon, config.min_strip_length) {
+        return None;
+    }
+    let bbox = polygon.bounding_rect()?;
+    let center = Point::new((bbox.min().x + bbox.max().x) / 2.0, (bbox.min().y + bbox.max().y) / 2.0);
+    let coverage = if config.force_square_coverages {
+        // Square buffer: axis-aligned square at strip_width / 2 radius.
+        let r = config.strip_width / 2.0;
+        Polygon::new(
+            LineString::from(vec![
+                coord! {x: center.x() - r, y: center.y() - r},
+                coord! {x: center.x() + r, y: center.y() - r},
+                coord! {x: center.x() + r, y: center.y() + r},
+                coord! {x: center.x() - r, y: center.y() + r},
+                coord! {x: center.x() - r, y: center.y() - r},
+            ]),
+            vec![],
+        )
+    } else {
+        center
+            .buffer_with_style(
+                BufferStyle::new(config.strip_width / 2.0)
+                    .line_cap(LineCap::Round(ROUND_ANGLE))
+                    .line_join(LineJoin::Round(ROUND_ANGLE)),
+            )
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| Polygon::new(LineString::new(vec![]), vec![]))
+    };
+    Some((vec![Target::Point(center)], vec![coverage]))
+}
+
+/// Computes the clipped, segmented, hole-masked strip lines for `polygon`.
+/// Returns an empty vec when the geometry is degenerate (no roll lines, invalid config).
+fn compute_lines(polygon: &Polygon, config: &Config, hull_cache: Option<&ConvexHullCache>) -> Vec<Line> {
     let Some([roll_from, roll_to]) = roll_lines(&Geometry::Polygon(polygon.clone()), config.heading, hull_cache) else {
-        return (vec![], vec![]);
+        return vec![];
     };
     let roll_from_length = Euclidean.length(&roll_from);
     // count_lines returns None when Config invariants are violated (min_overlap >= strip_width/2).
-    // Config::new enforces this, but a hand-built Config can bypass it — skip this block rather than panic.
+    // Config::new enforces this, but a hand-built Config can bypass it — skip rather than panic.
     let Some(number_of_lines) = count_lines(roll_from_length, config.strip_width, config.min_overlap) else {
-        return (vec![], vec![]);
+        return vec![];
     };
 
     let points_from = distribute_points(&roll_from, number_of_lines);
@@ -86,7 +167,10 @@ fn tessellate_block(polygon: &Polygon, config: &Config, hull_cache: Option<&Conv
         .collect();
 
     if number_of_lines == 1 && lines.is_empty() {
-        lines = segment_lines(&full_lines, config.max_strip_length, config.strip_width);
+        lines = segment_lines(&full_lines, config.max_strip_length, config.strip_width)
+            .into_iter()
+            .filter_map(|l| intersect_line(polygon, &l, config.strip_width, config.min_strip_length))
+            .collect();
     }
 
     lines = lines
@@ -95,22 +179,33 @@ fn tessellate_block(polygon: &Polygon, config: &Config, hull_cache: Option<&Conv
         .map(|l| ensure_line_length(l, config.min_strip_length))
         .collect();
 
-    let strips: Vec<Polygon> = lines
+    let holes = hole_masks(polygon, config);
+    if !holes.0.is_empty() {
+        lines = lines
+            .iter()
+            .flat_map(|l| clip_line_by_holes(l, &holes, config.strip_width))
+            .collect();
+    }
+
+    lines
+}
+
+/// Tessellates a single cartesian polygon according to the given config.
+fn tessellate_block(polygon: &Polygon, config: &Config, hull_cache: Option<&ConvexHullCache>) -> TessellationTuple {
+    if let Some(r) = try_as_point(polygon, config) {
+        return r;
+    }
+    let lines = compute_lines(polygon, config, hull_cache);
+    let strips = lines
         .iter()
         .filter_map(|l| project_strip(l, config.strip_width))
         .collect();
-
-    let targets: Vec<Target> = lines.into_iter().map(|l| Target::Line(LineString::from(l))).collect();
-
+    let targets = lines.into_iter().map(|l| Target::Line(LineString::from(l))).collect();
     (targets, strips)
 }
 
-/// Tessellates one polygon, sweeping headings when brute-force is active and the auto heading
-/// produces more than one target. Delegates to [`tessellate_block`] otherwise.
-///
-/// Adaptive two-pass sweep: coarse (0°–165° / 15° steps, 12 candidates) then fine (±12° around
-/// the coarse winner / 3° steps, 8 candidates). Both passes are parallelised when the `parallel`
-/// feature is enabled. The convex hull is precomputed once and shared across all calls.
+/// Tessellates one polygon, sweeping all headings 0°–175° in 5° steps when brute-force is active.
+/// Delegates to [`tessellate_block`] otherwise. The convex hull is precomputed once and reused.
 fn tessellate_with_best_heading(polygon: &Polygon, config: &Config) -> TessellationTuple {
     if !(config.brute_force && config.heading.is_none()) {
         return tessellate_block(polygon, config, None);
@@ -135,99 +230,23 @@ fn tessellate_with_best_heading(polygon: &Polygon, config: &Config) -> Tessellat
         })
     };
 
-    let coarse: Vec<(u32, TessellationTuple)> = {
-        #[cfg(feature = "parallel")]
-        {
-            (0_u32..180)
-                .into_par_iter()
-                .step_by(15)
-                .map(|deg| {
-                    (
-                        deg,
-                        tessellate_block(
-                            polygon,
-                            &Config {
-                                heading: Some(f64::from(deg)),
-                                ..sweep_base.clone()
-                            },
-                            cache_ref,
-                        ),
-                    )
-                })
-                .collect()
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            (0_u32..180)
-                .step_by(15)
-                .map(|deg| {
-                    (
-                        deg,
-                        tessellate_block(
-                            polygon,
-                            &Config {
-                                heading: Some(f64::from(deg)),
-                                ..sweep_base.clone()
-                            },
-                            cache_ref,
-                        ),
-                    )
-                })
-                .collect()
-        }
+    let try_heading = |deg: u32| {
+        tessellate_block(
+            polygon,
+            &Config {
+                heading: Some(f64::from(deg)),
+                ..sweep_base.clone()
+            },
+            cache_ref,
+        )
     };
 
-    let winner_deg = coarse
-        .iter()
-        .min_by(|(_, a), (_, b)| compare(a, b))
-        .map(|(d, _)| *d)
-        .unwrap_or(0);
-    let fine_headings: Vec<u32> = (-4_i32..=4)
-        .filter(|&d| d != 0)
-        .map(|d| ((winner_deg as i32 + d * 3).rem_euclid(180)) as u32)
-        .collect();
+    #[cfg(feature = "parallel")]
+    let best = (0_u32..180).into_par_iter().step_by(5).map(try_heading).min_by(compare);
+    #[cfg(not(feature = "parallel"))]
+    let best = (0_u32..180).step_by(5).map(try_heading).min_by(compare);
 
-    let fine: Vec<TessellationTuple> = {
-        #[cfg(feature = "parallel")]
-        {
-            fine_headings
-                .into_par_iter()
-                .map(|deg| {
-                    tessellate_block(
-                        polygon,
-                        &Config {
-                            heading: Some(f64::from(deg)),
-                            ..sweep_base.clone()
-                        },
-                        cache_ref,
-                    )
-                })
-                .collect()
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            fine_headings
-                .into_iter()
-                .map(|deg| {
-                    tessellate_block(
-                        polygon,
-                        &Config {
-                            heading: Some(f64::from(deg)),
-                            ..sweep_base.clone()
-                        },
-                        cache_ref,
-                    )
-                })
-                .collect()
-        }
-    };
-
-    coarse
-        .into_iter()
-        .map(|(_, t)| t)
-        .chain(fine)
-        .min_by(compare)
-        .unwrap_or_else(|| tessellate_block(polygon, config, cache_ref))
+    best.unwrap_or_else(|| tessellate_block(polygon, config, cache_ref))
 }
 
 /// Tessellates cartesian polygons (metre space). Shards all inputs into a flat collection,
@@ -292,7 +311,6 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationGeoRe
     let cartesian_geometries = iterate_normalized_geometry(geometries, |g| transformer.to_cartesian(g).ok());
 
     // Coerce each geometry to a polygon (points become circles, lines become strips).
-    // LineStrings with more than two points are treated as their first-to-last Line.
     // Empty LineStrings and geometries that cannot be buffered are skipped.
     // Simplify in cartesian (meter) space: strip_width / 50 ≈ 100 m at default settings,
     // well below tessellation precision, but dramatically reduces vertex count for complex inputs.
@@ -300,9 +318,16 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationGeoRe
         .iter()
         .filter_map(|g| match g {
             Geometry::LineString(ls) => {
-                let first = ls.0.first()?;
-                let last = ls.0.last()?;
-                coerce_to_polygon(&Geometry::Line(Line::new(*first, *last)), config.expansion)
+                if ls.0.len() < 2 {
+                    return None;
+                }
+                ls.buffer_with_style(
+                    BufferStyle::new(config.expansion)
+                        .line_cap(LineCap::Round(ROUND_ANGLE))
+                        .line_join(LineJoin::Round(ROUND_ANGLE)),
+                )
+                .into_iter()
+                .next()
             }
             _ => coerce_to_polygon(g, config.expansion),
         })
@@ -316,18 +341,9 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationGeoRe
     // Brute-force heading optimisation is handled inside tessellate_strategy, per shard.
     let (cartesian_targets, cartesian_coverages) = tessellate_strategy(&cartesian_intermediates, config);
 
-    // Enforce GeoJSON right-hand rule (CCW winding) on polygons — item 4.
-    #[cfg(feature = "parallel")]
-    let rhr_intermediates: Vec<Polygon> = cartesian_intermediates.par_iter().map(polygon_ccw_no_holes).collect();
-    #[cfg(not(feature = "parallel"))]
-    let rhr_intermediates: Vec<Polygon> = cartesian_intermediates.iter().map(polygon_ccw_no_holes).collect();
-
-    #[cfg(feature = "parallel")]
-    let rhr_coverages: Vec<Polygon> = cartesian_coverages.par_iter().map(polygon_ccw_no_holes).collect();
-    #[cfg(not(feature = "parallel"))]
-    let rhr_coverages: Vec<Polygon> = cartesian_coverages.iter().map(polygon_ccw_no_holes).collect();
-
-    // Project everything back to geodesic (lon/lat degrees) — item 1.
+    // Project everything back to geodesic (lon/lat degrees).
+    // Winding correction is deferred to the GeoJSON serialisation step via polygon_feature_rfc7946,
+    // keeping the geo layer free of JSON conventions.
     let project_target_back = |t: Target| -> Option<Target> {
         match t {
             Target::Point(p) => match transformer.to_geodesic(&Geometry::Point(p)).ok()? {
@@ -356,17 +372,26 @@ pub fn tessellate(geometries: &[Geometry], config: &Config) -> TessellationGeoRe
     let targets: Vec<Target> = cartesian_targets.into_iter().filter_map(project_target_back).collect();
 
     #[cfg(feature = "parallel")]
-    let coverages: Vec<Polygon> = rhr_coverages.into_par_iter().filter_map(project_polygon_back).collect();
-    #[cfg(not(feature = "parallel"))]
-    let coverages: Vec<Polygon> = rhr_coverages.into_iter().filter_map(project_polygon_back).collect();
-
-    #[cfg(feature = "parallel")]
-    let intermediates: Vec<Polygon> = rhr_intermediates
+    let coverages: Vec<Polygon> = cartesian_coverages
         .into_par_iter()
         .filter_map(project_polygon_back)
         .collect();
     #[cfg(not(feature = "parallel"))]
-    let intermediates: Vec<Polygon> = rhr_intermediates.into_iter().filter_map(project_polygon_back).collect();
+    let coverages: Vec<Polygon> = cartesian_coverages
+        .into_iter()
+        .filter_map(project_polygon_back)
+        .collect();
+
+    #[cfg(feature = "parallel")]
+    let intermediates: Vec<Polygon> = cartesian_intermediates
+        .into_par_iter()
+        .filter_map(project_polygon_back)
+        .collect();
+    #[cfg(not(feature = "parallel"))]
+    let intermediates: Vec<Polygon> = cartesian_intermediates
+        .into_iter()
+        .filter_map(project_polygon_back)
+        .collect();
 
     TessellationGeoResult {
         targets,
@@ -384,8 +409,6 @@ pub fn tessellate_geojson_to_geo(geojson: &Value, config: &Config) -> Tessellati
 /// Parses a GeoJSON Value, tessellates, and returns the result as GeoJSON FeatureCollections.
 pub fn tessellate_geojson_to_geojson(geojson: &Value, config: &Config) -> TessellationGeoJSONResult {
     let r = tessellate_geojson_to_geo(geojson, config);
-    let polygon_feature =
-        |p: geo::Polygon| crate::geojson::feature(&crate::geojson::geometry_to_json(&Geometry::Polygon(p)));
     let target_feature = |t: Target| {
         let geom = match t {
             Target::Point(p) => crate::geojson::geometry_to_json(&Geometry::Point(p)),
@@ -395,8 +418,18 @@ pub fn tessellate_geojson_to_geojson(geojson: &Value, config: &Config) -> Tessel
     };
     TessellationGeoJSONResult {
         targets: crate::geojson::feature_collection(r.targets.into_iter().map(target_feature).collect()),
-        coverages: crate::geojson::feature_collection(r.coverages.into_iter().map(polygon_feature).collect()),
-        intermediates: crate::geojson::feature_collection(r.intermediates.into_iter().map(polygon_feature).collect()),
+        coverages: crate::geojson::feature_collection(
+            r.coverages
+                .into_iter()
+                .map(crate::geojson::polygon_feature_rfc7946)
+                .collect(),
+        ),
+        intermediates: crate::geojson::feature_collection(
+            r.intermediates
+                .into_iter()
+                .map(crate::geojson::polygon_feature_rfc7946)
+                .collect(),
+        ),
     }
 }
 

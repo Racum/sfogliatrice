@@ -1,5 +1,6 @@
 [workspace]
 members = ["sfogliatrice_lib", "sfogliatrice", "sfogliatrice_wasm", "sfogliatrice_py"]
+default-members = ["sfogliatrice"]
 resolver = "2"
 
 [profile.release]

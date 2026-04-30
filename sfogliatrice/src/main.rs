@@ -80,6 +80,10 @@ struct Cli {
     #[arg(short = 'b', long = "brute-force")]
     brute_force: bool,
 
+    /// Ignore Polygon holes.
+    #[arg(long = "ignore-holes")]
+    ignore_holes: bool,
+
     /// Print version information.
     #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
     version: (),
@@ -141,6 +145,7 @@ fn run(cli: &Cli, input_str: &str) -> Result<RunOutput, String> {
     )
     .map_err(|e| e.to_string())?;
     config.brute_force = cli.brute_force;
+    config.ignore_holes = cli.ignore_holes;
 
     // Flag precedence: targets are shown by default; `--no-targets` hides them; `--all` overrides
     // `--no-targets` and forces every output (targets + coverages + intermediates + original).

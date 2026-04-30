@@ -212,7 +212,14 @@
     #min_strip_length { z-index: 1; }
     #max_strip_length { z-index: 2; }
 
-    #advanced-wrap, #advanced-fields { display: contents; }
+    #advanced-wrap { display: contents; }
+    #advanced-fields {
+      flex-basis: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1rem;
+      align-items: flex-end;
+    }
     #advanced-fields.hidden { display: none !important; }
     #advanced-toggle {
       align-self: flex-end;
@@ -318,6 +325,7 @@
       <div class="field"><label>Shard radius (m)</label><input type="number" id="shard_radius"        value="50000"></div>
       <div class="field"><label>Force line targets</label><input type="checkbox" id="force_line_targets"></div>
       <div class="field"><label>Force square coverages</label><input type="checkbox" id="force_square_coverages"></div>
+      <div class="field"><label>Ignore holes</label><input type="checkbox" id="ignore_holes"></div>
     </div>
   </div>
   <button id="run" disabled>Tessellate</button>
@@ -679,14 +687,20 @@
     return Math.abs(area) * 6371000 * 6371000 / 2;
   }
 
+  function polygonArea(rings) {
+    let area = ringArea(rings[0]);
+    for (let i = 1; i < rings.length; i++) area -= ringArea(rings[i]);
+    return Math.max(0, area);
+  }
+
   function featureCollectionArea(fc) {
     let total = 0;
     for (const f of (fc.features ?? [])) {
       const g = f.geometry ?? f;
       if (g.type === 'Polygon') {
-        total += ringArea(g.coordinates[0]);
+        total += polygonArea(g.coordinates);
       } else if (g.type === 'MultiPolygon') {
-        for (const poly of g.coordinates) total += ringArea(poly[0]);
+        for (const poly of g.coordinates) total += polygonArea(poly);
       }
     }
     return total;
@@ -731,6 +745,7 @@
         bool('force_line_targets'), bool('force_square_coverages'),
         heading(),
         bool('brute_force'),
+        bool('ignore_holes'),
       );
       elapsedMs = performance.now() - t0;
     } catch (e) {

@@ -56,51 +56,29 @@ fn find_clusters(polygons: &[Polygon], threshold: f64) -> Vec<Vec<usize>> {
     for (_, r) in &valid {
         builder.add(r.min().x, r.min().y, r.max().x, r.max().y);
     }
+    debug_assert_eq!(valid.len(), m, "AABB builder item count mismatch");
     let index = builder.build().expect("static_aabb2d_index build failed");
 
     // Phase 1: collect neighbour edges (pos_j > pos_i avoids duplicate pairs).
-    #[cfg(feature = "parallel")]
-    let edges: Vec<(usize, usize)> = (0..m)
-        .into_par_iter()
-        .flat_map_iter(|pos_i| {
-            let index = &index; // &T is Copy, so the inner move closure can capture it
-            let valid = &valid;
-            let (poly_i, r) = valid[pos_i];
-            index
-                .query(
-                    r.min().x - threshold,
-                    r.min().y - threshold,
-                    r.max().x + threshold,
-                    r.max().y + threshold,
-                )
-                .into_iter()
-                .filter_map(move |pos_j| {
-                    if pos_j > pos_i {
-                        Some((poly_i, valid[pos_j].0))
-                    } else {
-                        None
-                    }
-                })
-        })
-        .collect();
-
-    #[cfg(not(feature = "parallel"))]
-    let edges: Vec<(usize, usize)> = {
-        let mut edges = vec![];
-        for (pos_i, &(poly_i, r)) in valid.iter().enumerate() {
-            for pos_j in index.query(
+    // Rebind as references so the inner `move` closure copies them (references are Copy).
+    let valid = &valid;
+    let index = &index;
+    let neighbours_of = |pos_i: usize| {
+        let (poly_i, r) = valid[pos_i];
+        index
+            .query(
                 r.min().x - threshold,
                 r.min().y - threshold,
                 r.max().x + threshold,
                 r.max().y + threshold,
-            ) {
-                if pos_j > pos_i {
-                    edges.push((poly_i, valid[pos_j].0));
-                }
-            }
-        }
-        edges
+            )
+            .into_iter()
+            .filter_map(move |pos_j| (pos_j > pos_i).then_some((poly_i, valid[pos_j].0)))
     };
+    #[cfg(feature = "parallel")]
+    let edges: Vec<(usize, usize)> = (0..m).into_par_iter().flat_map_iter(neighbours_of).collect();
+    #[cfg(not(feature = "parallel"))]
+    let edges: Vec<(usize, usize)> = (0..m).flat_map(neighbours_of).collect();
 
     // Phase 2: union-find over the edge list.
     let mut parent: Vec<usize> = (0..n).collect();
@@ -133,6 +111,10 @@ fn find_clusters(polygons: &[Polygon], threshold: f64) -> Vec<Vec<usize>> {
 /// Returns the polygon directly for single-member clusters.
 /// Returns `None` if the hull is degenerate.
 fn hull_of(polygons: &[Polygon], indices: &[usize], threshold: f64) -> Option<Polygon> {
+    debug_assert!(
+        indices.iter().all(|&i| i < polygons.len()),
+        "hull_of: cluster index out of bounds"
+    );
     if indices.len() == 1 {
         return Some(polygons[indices[0]].clone());
     }
@@ -155,6 +137,9 @@ fn hull_of(polygons: &[Polygon], indices: &[usize], threshold: f64) -> Option<Po
     });
 
     if hull.is_valid() && hull.unsigned_area() > 0.0 {
+        // Holes from multiple members may overlap or extend beyond the hull boundary,
+        // producing an invalid polygon. Only attach holes when they can be reliably
+        // attributed to a single member's geometry (handled by the single-member branch).
         Some(hull)
     } else {
         None

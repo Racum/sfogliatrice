@@ -34,6 +34,8 @@ use sfogliatrice_lib::{Config, tessellate_geojson_to_geojson};
 ///     Fixed strip heading in degrees; None lets the algorithm choose the optimal angle. (default: None)
 /// brute_force : bool, optional
 ///     Try all headings 0–179° and pick the one with fewest targets; slow but optimal. (default: False)
+/// ignore_holes : bool, optional
+///     Ignore Polygon holes. (default: False)
 ///
 /// Returns
 /// -------
@@ -54,6 +56,7 @@ use sfogliatrice_lib::{Config, tessellate_geojson_to_geojson};
     force_square_coverages=None,
     heading=None,
     brute_force=None,
+    ignore_holes=None,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn tessellate(
@@ -70,6 +73,7 @@ fn tessellate(
     force_square_coverages: Option<bool>,
     heading: Option<f64>,
     brute_force: Option<bool>,
+    ignore_holes: Option<bool>,
 ) -> PyResult<Py<PyAny>> {
     let geojson_value: serde_json::Value = if let Ok(s) = geojson.extract::<String>() {
         serde_json::from_str(&s).map_err(|e| PyValueError::new_err(e.to_string()))?
@@ -98,6 +102,9 @@ fn tessellate(
     }
     if let Some(v) = brute_force {
         config.brute_force = v;
+    }
+    if let Some(v) = ignore_holes {
+        config.ignore_holes = v;
     }
 
     let result = tessellate_geojson_to_geojson(&geojson_value, &config);

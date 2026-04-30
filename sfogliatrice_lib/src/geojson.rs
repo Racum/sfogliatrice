@@ -1,4 +1,4 @@
-use geo::Geometry;
+use geo::{Geometry, Polygon, Winding};
 use geojson::GeoJson;
 use serde_json::{Value, json};
 
@@ -131,10 +131,25 @@ fn set_precision(coords: &Value, factor: f64) -> Value {
     }
 }
 
+/// Serializes a polygon as a GeoJSON Feature, enforcing RFC-7946 winding in one shot:
+/// exterior CCW, each interior ring CW. Works correctly whether or not the polygon has holes.
+pub fn polygon_feature_rfc7946(polygon: Polygon) -> Value {
+    let (mut exterior, interiors) = polygon.into_inner();
+    exterior.make_ccw_winding();
+    let interiors = interiors
+        .into_iter()
+        .map(|mut ring| {
+            ring.make_cw_winding();
+            ring
+        })
+        .collect();
+    feature(&geometry_to_json(&Geometry::Polygon(Polygon::new(exterior, interiors))))
+}
+
 /// Serializes a `geo::Geometry` as a GeoJSON geometry object (a `serde_json::Value`).
 pub fn geometry_to_json(geometry: &Geometry) -> Value {
     let gj_geom = geojson::Geometry::from(geometry);
-    serde_json::to_value(gj_geom).expect("Failed to serialize GeoJSON geometry")
+    serde_json::to_value(gj_geom).unwrap_or(Value::Null)
 }
 
 #[cfg(test)]

@@ -44,20 +44,22 @@ fn test_iterate_polygons() {
         Geometry::Polygon(a_poly.clone()),
         Geometry::MultiPolygon(MultiPolygon::new(vec![a_poly.clone(), a_poly.clone()])),
     ]);
-    let a_point_as_polygon = polygon![(x: 0., y: 0.), (x: 0., y: 0.)];
-    let a_line_as_polygon = polygon![(x: 0., y: 0.), (x: 1., y: 1.), (x: 0., y: 0.)];
     let binding = Geometry::GeometryCollection(a_gc);
-    let mut result = iterate_polygons(&binding);
-    assert_eq!(result.next(), Some(a_point_as_polygon.clone()));
-    assert_eq!(result.next(), Some(a_point_as_polygon.clone()));
-    assert_eq!(result.next(), Some(a_point_as_polygon.clone()));
-    assert_eq!(result.next(), Some(a_line_as_polygon.clone()));
-    assert_eq!(result.next(), Some(a_line_as_polygon.clone()));
-    assert_eq!(result.next(), Some(a_line_as_polygon.clone()));
-    assert_eq!(result.next(), Some(a_poly.clone()));
-    assert_eq!(result.next(), Some(a_poly.clone()));
-    assert_eq!(result.next(), Some(a_poly.clone()));
-    assert_eq!(result.next(), None);
+    let result: Vec<Polygon> = iterate_polygons(&binding).collect();
+
+    // 3 points (1 Point + 2 from MultiPoint) + 3 lines (1 LineString + 2 from MultiLineString)
+    // + 3 polygons (1 Polygon + 2 from MultiPolygon) = 9 total.
+    assert_eq!(result.len(), 9);
+
+    // Points and lines are buffered into real polygons (non-zero area).
+    for p in &result[..6] {
+        assert!(p.unsigned_area() > 0.0, "buffered point/line must have area");
+    }
+
+    // Polygons pass through unchanged.
+    assert_eq!(result[6], a_poly);
+    assert_eq!(result[7], a_poly);
+    assert_eq!(result[8], a_poly);
 }
 
 #[test]
@@ -892,4 +894,43 @@ fn test_iterate_normalized_geometry_passthrough_point_and_line() {
     assert_eq!(out.len(), 2);
     assert_eq!(out[0], p);
     assert_eq!(out[1], ls);
+}
+
+#[test]
+fn test_clip_lines_by_polygons() {
+    let lines = vec![
+        line_string![(x: -3., y:  0.5), (x: 3., y:  0.5)],
+        line_string![(x: -3., y: -0.5), (x: 3., y: -0.5)],
+    ];
+    let polygons = vec![
+        polygon![(x: 2., y: 1.), (x: 2., y: -1.), (x: 3., y: -1.), (x: 3., y: 1.), (x: 2., y: 1.)],
+        polygon![(x: -1., y: 1.), (x: -1., y: -1.), (x: 1., y: -1.), (x: 1., y: 1.), (x: -1., y: 1.)],
+    ];
+
+    let result = clip_lines_by_polygons(&lines, &polygons);
+
+    assert_eq!(result.len(), 4);
+
+    let mut lengths: Vec<f64> = result.iter().map(|ls| Euclidean.length(ls)).collect();
+    lengths.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!(
+        (lengths[0] - 1.0).abs() < 1e-10,
+        "expected length 1, got {}",
+        lengths[0]
+    );
+    assert!(
+        (lengths[1] - 1.0).abs() < 1e-10,
+        "expected length 1, got {}",
+        lengths[1]
+    );
+    assert!(
+        (lengths[2] - 2.0).abs() < 1e-10,
+        "expected length 2, got {}",
+        lengths[2]
+    );
+    assert!(
+        (lengths[3] - 2.0).abs() < 1e-10,
+        "expected length 2, got {}",
+        lengths[3]
+    );
 }

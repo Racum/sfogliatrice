@@ -2,8 +2,8 @@ use geo::algorithm::buffer::{BufferStyle, LineCap, LineJoin};
 use geo::algorithm::unary_union;
 use geo::{
     Area, BooleanOps, BoundingRect, Buffer, Centroid, ConvexHull, Distance, Euclidean, Geometry, HasDimensions,
-    InterpolatableLine, Length, Line, LineString, MinimumRotatedRect, MultiPolygon, Point, Polygon, Simplify,
-    Validation, Winding, coord, point,
+    InterpolatableLine, Length, Line, LineString, MinimumRotatedRect, MultiLineString, MultiPolygon, Point, Polygon,
+    Simplify, Validation, Winding, coord, point,
 };
 
 #[cfg(feature = "parallel")]
@@ -58,11 +58,23 @@ pub fn iterate_geometry(geometry: &Geometry) -> Box<dyn Iterator<Item = Geometry
 }
 
 /// Iterates over the results of iterate_geometry, converting all non-Polygons into Polygons.
+/// Points and LineStrings are replaced by a tiny square buffer (1e-8 units); convex hull is used
+/// as fallback for degenerate cases where the buffer produces no output.
 pub fn iterate_polygons(geometry: &Geometry) -> impl Iterator<Item = Polygon> {
-    iterate_geometry(geometry).map(|geo| match geo {
-        // TODO: Buffer points and lines in 0.00000001 instead of convex_hull():
-        Geometry::Point(g) => ConvexHull::convex_hull(&g),
-        Geometry::LineString(g) => ConvexHull::convex_hull(&g),
+    let style = BufferStyle::new(1e-8)
+        .line_cap(LineCap::Square)
+        .line_join(LineJoin::Miter(f64::MAX));
+    iterate_geometry(geometry).map(move |geo| match geo {
+        Geometry::Point(g) => g
+            .buffer_with_style(style.clone())
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| ConvexHull::convex_hull(&g)),
+        Geometry::LineString(g) => g
+            .buffer_with_style(style.clone())
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| ConvexHull::convex_hull(&g)),
         Geometry::Polygon(g) => g,
         // iterate_geometry always yields Point, LineString, or Polygon — never composite types.
         _ => unreachable!(),
@@ -122,10 +134,10 @@ pub fn iterate_normalized_geometry<F>(geometries: &[Geometry], project: F) -> Ve
 where
     F: Fn(&Geometry) -> Option<Geometry> + Send + Sync,
 {
-    // Flatten lazily (cheap clones); then project + fix in parallel since both are independent.
-    let flat: Vec<Geometry> = geometries.iter().flat_map(iterate_geometry).collect();
     #[cfg(feature = "parallel")]
     {
+        // into_par_iter requires an owned collection; collect the flat geometry first.
+        let flat: Vec<Geometry> = geometries.iter().flat_map(iterate_geometry).collect();
         flat.into_par_iter()
             .filter_map(|g| project(&g))
             .filter_map(|g| fix_geometry(&g).ok())
@@ -133,7 +145,9 @@ where
     }
     #[cfg(not(feature = "parallel"))]
     {
-        flat.into_iter()
+        geometries
+            .iter()
+            .flat_map(iterate_geometry)
             .filter_map(|g| project(&g))
             .filter_map(|g| fix_geometry(&g).ok())
             .collect()
@@ -415,9 +429,8 @@ pub fn segment_lines(lines: &[Line], max_strip_length: f64, strip_width: f64) ->
     let mut segmented_lines: Vec<Line> = vec![];
     for input_line in lines {
         let mut line = *input_line;
-        let mut line_length: f64;
+        let mut line_length = Euclidean.length(&line);
         'outer: loop {
-            line_length = Euclidean.length(&line);
             if line_length <= (max_strip_length + strip_width) {
                 segmented_lines.push(line);
                 break;
@@ -630,10 +643,18 @@ pub fn right_hand_rule(geometry: &Geometry) -> Geometry {
     }
 }
 
-/// Returns the number of lines needed to satisfy the constraints of the width and overlap, or
-/// `None` for inputs that can't produce a well-defined answer: non-finite arguments, non-positive
-/// `strip_width`, `min_overlap >= strip_width / 2` (Config invariant), or saturation overflow on
-/// the final `+1` (astronomical inputs push `strips_with_no_overlap` to `u16::MAX`).
+/// Returns the segments of `lines` that lie outside all `polygons`.
+pub fn clip_lines_by_polygons(lines: &[LineString], polygons: &[Polygon]) -> Vec<LineString> {
+    if lines.is_empty() || polygons.is_empty() {
+        return lines.to_vec();
+    }
+    let multi_line = MultiLineString::new(lines.to_vec());
+    let multi_poly = MultiPolygon::new(polygons.to_vec());
+    multi_poly.clip(&multi_line, true).into_iter().collect()
+}
+
+/// Returns strips needed to cover `roll_line_length` at the given `strip_width` and `min_overlap`,
+/// or `None` for invalid inputs.
 pub fn count_lines(roll_line_length: f64, strip_width: f64, min_overlap: f64) -> Option<u16> {
     if !roll_line_length.is_finite() || !strip_width.is_finite() || !min_overlap.is_finite() {
         return None;
@@ -641,7 +662,11 @@ pub fn count_lines(roll_line_length: f64, strip_width: f64, min_overlap: f64) ->
     if strip_width <= 0.0 || min_overlap >= (strip_width / 2.0) {
         return None;
     }
-    let strips_with_no_overlap = (roll_line_length / strip_width).ceil() as u16;
+    let strips_float = (roll_line_length / strip_width).ceil();
+    if !strips_float.is_finite() || strips_float > u16::MAX as f64 {
+        return None;
+    }
+    let strips_with_no_overlap = strips_float as u16;
     // A degenerate roll line (zero or near-zero length) still needs at least one strip;
     // avoids the overlap_zones underflow below.
     if strips_with_no_overlap == 0 {

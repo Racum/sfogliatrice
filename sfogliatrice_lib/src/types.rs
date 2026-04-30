@@ -37,11 +37,13 @@ pub struct Config {
     pub force_line_targets: bool,
     /// Always emit square coverage for Points instead of circles.
     pub force_square_coverages: bool,
-    /// Fixed strip heading in degrees; empty lets the algorithm choose the optimal angle.
+    /// Fixed strip heading in degrees; `None` lets the algorithm choose the optimal angle.
     pub heading: Option<f64>,
     /// When true and heading is None, iterate 0–179° and pick the heading that produces the
     /// fewest targets (tiebreaker: lowest coverage overfitting vs the input area).
     pub brute_force: bool,
+    /// Ignore Polygon holes.
+    pub ignore_holes: bool,
 }
 
 /// Describes which parameter failed validation and why.
@@ -54,6 +56,7 @@ pub enum ConfigError {
     StripWidthTooLarge,
     MaxStripLengthTooLarge,
     MinOverlapTooLarge,
+    HeadingNotFinite,
 }
 
 impl std::fmt::Display for ConfigError {
@@ -80,11 +83,17 @@ impl std::fmt::Display for ConfigError {
             ConfigError::MinOverlapTooLarge => {
                 write!(f, "Minimum overlap must be less than half of --width.")
             }
+            ConfigError::HeadingNotFinite => {
+                write!(f, "Heading must be a finite number.")
+            }
         }
     }
 }
 
 impl Config {
+    /// Creates a validated `Config`. Fields not listed here (`min_strip_length`,
+    /// `shard_density_ratio`, `brute_force`, `ignore_holes`) default to `Config::default()`
+    /// and can be set directly after construction.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         expansion: f64,
@@ -117,6 +126,9 @@ impl Config {
         if min_overlap >= strip_width / 2.0 {
             return Err(ConfigError::MinOverlapTooLarge);
         }
+        if heading.is_some_and(|h| !h.is_finite()) {
+            return Err(ConfigError::HeadingNotFinite);
+        }
         Ok(Self {
             expansion,
             strip_width,
@@ -145,6 +157,7 @@ impl Default for Config {
             force_square_coverages: false,
             heading: None,
             brute_force: false,
+            ignore_holes: false,
         }
     }
 }
@@ -177,12 +190,7 @@ impl TessellationGeoJSONResult {
     /// Builds a single FeatureCollection from the selected output layers.
     pub fn to_feature_collection(&self, targets: bool, coverages: bool, intermediates: bool) -> Value {
         let mut features: Vec<Value> = vec![];
-        let extract = |fc: &Value| -> Vec<Value> {
-            fc["features"]
-                .as_array()
-                .expect("TessellationGeoJSONResult fields are always FeatureCollections")
-                .clone()
-        };
+        let extract = |fc: &Value| -> Vec<Value> { fc["features"].as_array().cloned().unwrap_or_default() };
         if intermediates {
             features.extend(extract(&self.intermediates));
         }
@@ -205,6 +213,19 @@ mod tests {
         DEFAULT_MAX_STRIP_LENGTH, DEFAULT_MIN_OVERLAP, DEFAULT_MIN_STRIP_LENGTH, DEFAULT_SHARD_DENSITY_RATIO,
         DEFAULT_SHARD_RADIUS, DEFAULT_STRIP_WIDTH, DEFAULT_TARGET_EXPANSION,
     };
+
+    fn config_with_heading(heading: Option<f64>) -> Result<Config, ConfigError> {
+        Config::new(
+            DEFAULT_TARGET_EXPANSION,
+            DEFAULT_STRIP_WIDTH,
+            DEFAULT_MAX_STRIP_LENGTH,
+            DEFAULT_MIN_OVERLAP,
+            false,
+            false,
+            DEFAULT_SHARD_RADIUS,
+            heading,
+        )
+    }
 
     #[test]
     fn test_config_default_matches_constants() {
@@ -319,6 +340,18 @@ mod tests {
     }
 
     #[test]
+    fn test_config_new_rejects_non_finite_heading() {
+        assert_eq!(
+            config_with_heading(Some(f64::NAN)).unwrap_err(),
+            ConfigError::HeadingNotFinite
+        );
+        assert_eq!(
+            config_with_heading(Some(f64::INFINITY)).unwrap_err(),
+            ConfigError::HeadingNotFinite
+        );
+    }
+
+    #[test]
     fn test_config_new_min_overlap_too_large() {
         // min_overlap >= strip_width / 2
         let err = Config::new(5_000.0, 1_000.0, 50_000.0, 500.0, false, false, 50_000.0, None).unwrap_err();
@@ -356,6 +389,10 @@ mod tests {
         assert_eq!(
             ConfigError::MinOverlapTooLarge.to_string(),
             "Minimum overlap must be less than half of --width."
+        );
+        assert_eq!(
+            ConfigError::HeadingNotFinite.to_string(),
+            "Heading must be a finite number."
         );
     }
 

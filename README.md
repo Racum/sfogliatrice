@@ -1,6 +1,6 @@
 # Sfogliatrice – Geometry Tessellation Tool
 
-<img src="https://raw.githubusercontent.com/Racum/sfogliatrice/main/assets/sfogliatrice.png" width="300">
+<img src="https://raw.githubusercontent.com/Racum/sfogliatrice/main/assets/sfogliatrice.png" width="400">
 
 *"Sfogliatrice" = "Mechanized Pasta Cutter"*
 
@@ -43,6 +43,7 @@ Options:
       --square-coverages           Show point coverages as squares
       --heading <HEADING>          Target heading angle in degrees (0.0 means north to south)
   -b, --brute-force                Try many headings for better results
+      --ignore-holes               Ignore Polygon holes
   -v, --version                    Print version information
   -h, --help                       Print help
 ```
@@ -215,6 +216,7 @@ pub struct Config {
     pub force_square_coverages: bool,
     pub heading: Option<f64>,
     pub brute_force: bool,
+    pub ignore_holes: bool,
 }
 ```
 
@@ -263,13 +265,13 @@ See [`sfogliatrice_py/example.py`](sfogliatrice_py/example.py) for a full exampl
 If you want to develop, you need [maturin](https://www.maturin.rs) to build it:
 
 ```
-cd sfogliatrice_py
-python3 -m venv .venv
-source .venv/bin/activate
-pip install maturin
+$ cd sfogliatrice_py
+$ python3 -m venv .venv
+$ source .venv/bin/activate
+$ pip install maturin
 
-maturin develop
-python3 example.py
+$ maturin develop
+$ python3 example.py
 ```
 
 ## Contributing
