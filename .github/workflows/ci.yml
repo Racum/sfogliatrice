@@ -1,0 +1,56 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test (sequential)
+        run: cargo test -p sfogliatrice_lib -p sfogliatrice
+
+      - name: Test (parallel feature)
+        run: cargo test -p sfogliatrice_lib -p sfogliatrice --features sfogliatrice_lib/parallel
+
+  versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check version sync
+        run: |
+          LIB_VER=$(sed -n 's/^version = "\(.*\)"/\1/p' sfogliatrice_lib/Cargo.toml | head -1)
+          fail=0
+          check() {
+            local desc="$1" actual="$2"
+            if [ "$actual" != "$LIB_VER" ]; then
+              echo "MISMATCH [$desc]: expected '$LIB_VER', got '$actual'"
+              fail=1
+            fi
+          }
+          # Own versions
+          check "sfogliatrice"      "$(sed -n 's/^version = "\(.*\)"/\1/p' sfogliatrice/Cargo.toml | head -1)"
+          check "sfogliatrice_wasm" "$(sed -n 's/^version = "\(.*\)"/\1/p' sfogliatrice_wasm/Cargo.toml | head -1)"
+          check "sfogliatrice_py"   "$(sed -n 's/^version = "\(.*\)"/\1/p' sfogliatrice_py/Cargo.toml | head -1)"
+          check "pyproject.toml"    "$(sed -n 's/^version = "\(.*\)"/\1/p' sfogliatrice_py/pyproject.toml | head -1)"
+          # Cross-imports of sfogliatrice_lib
+          check "sfogliatrice → sfogliatrice_lib"      "$(grep 'sfogliatrice_lib' sfogliatrice/Cargo.toml      | sed 's/.*version = "\([^"]*\)".*/\1/')"
+          check "sfogliatrice_wasm → sfogliatrice_lib" "$(grep 'sfogliatrice_lib' sfogliatrice_wasm/Cargo.toml | sed 's/.*version = "\([^"]*\)".*/\1/')"
+          check "sfogliatrice_py → sfogliatrice_lib"   "$(grep 'sfogliatrice_lib' sfogliatrice_py/Cargo.toml   | sed 's/.*version = "\([^"]*\)".*/\1/')"
+          [ $fail -eq 0 ] && echo "All versions in sync: $LIB_VER" || exit 1
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (sequential)
+        run: cargo clippy -p sfogliatrice_lib -p sfogliatrice --all-targets -- -D warnings
+
+      - name: Clippy (parallel feature)
+        run: cargo clippy -p sfogliatrice_lib -p sfogliatrice --all-targets --features sfogliatrice_lib/parallel -- -D warnings
