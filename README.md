@@ -10,9 +10,63 @@ Sfogliatrice is both a **CLI tool** and a **Rust library** to handle tessellatio
 
 ### Installation
 
-To use Sfogliatrice, you can simply install it via cargo:
+### macOS (Homebrew)
 
-```bash
+Requires macOS 11 Big Sur or newer.
+
+```shell
+$ brew tap racum/tap  # Setup (only needed once).
+
+$ brew install sfogliatrice  # Install.
+
+$ brew upgrade sfogliatrice  # Update.
+```
+
+### Linux (Debian/Ubuntu, APT)
+
+```shell
+$ # Set up APT source (only needed once):
+$ curl -fsSL https://racum.github.io/apt/key.gpg \
+    | sudo gpg --dearmor -o /etc/apt/keyrings/racum.gpg \
+  && echo "deb [signed-by=/etc/apt/keyrings/racum.gpg] https://racum.github.io/apt stable main" \
+    | sudo tee /etc/apt/sources.list.d/racum.list
+
+$ sudo apt update && sudo apt install sfogliatrice  # Install or update.
+```
+
+### Linux (other distros)
+
+Static binary, zero runtime deps. Pick the right arch:
+
+```shell
+$ # x86_64:
+$ curl -L https://github.com/racum/sfogliatrice/releases/latest/download/sfogliatrice-linux-x86_64.tar.gz | tar xz
+$ sudo mv sfogliatrice /usr/local/bin/
+
+$ # arm64:
+$ curl -L https://github.com/racum/sfogliatrice/releases/latest/download/sfogliatrice-linux-aarch64.tar.gz | tar xz
+$ sudo mv sfogliatrice /usr/local/bin/
+```
+
+### Windows (Scoop)
+
+Requires Windows 10 or newer.
+
+```shell
+> scoop bucket add racum https://github.com/racum/scoop-bucket  # Setup (only needed once).
+
+> scoop install sfogliatrice  # Install.
+
+> scoop update sfogliatrice  # Update.
+```
+
+The zipped `.exe` (x86_64 and arm64) can also be downloaded directly from the [GitHub releases page](https://github.com/racum/sfogliatrice/releases/latest).
+
+### Cargo (any platform)
+
+**Sfogliatrice** was developed in [Rust](https://www.rust-lang.org), thus it requires [its toolchain](https://www.rust-lang.org/tools/install); if you already have it available, you can install it with `cargo`:
+
+```shell
 $ cargo install sfogliatrice
 ```
 
