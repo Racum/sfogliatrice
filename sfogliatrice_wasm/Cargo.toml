@@ -1,8 +1,8 @@
 [package]
 name = "sfogliatrice_wasm"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
-authors = ["Ronaldo Racum <ronaldo@racum.com>"]
+authors = ["Ronaldo Ferreira <ronaldo@racum.com>"]
 license = "MIT"
 description = "WebAssembly bindings for sfogliatrice tessellation."
 repository = "https://github.com/racum/sfogliatrice"
@@ -16,7 +16,7 @@ name = "sfogliatrice"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-sfogliatrice_lib = { path = "../sfogliatrice_lib", version = "0.6.0" }
+sfogliatrice_lib = { path = "../sfogliatrice_lib", version = "0.6.1" }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 serde_json = "1"

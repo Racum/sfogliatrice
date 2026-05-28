@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sfogliatrice"
-version = "0.6.0"
+version = "0.6.1"
 description = "Python bindings for sfogliatrice tessellation."
 license = { text = "MIT" }
 keywords = ["geo", "geojson", "tessellation", "satellite"]

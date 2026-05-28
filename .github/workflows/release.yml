@@ -1,0 +1,345 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - release
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ── Version guard ─────────────────────────────────────────────────────────
+
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate version and prepare draft release
+        id: get-version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="sfogliatrice") | .version')
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+          # Fail only if a *published* (non-draft) release exists for this version
+          if gh release view "v${VERSION}" --repo racum/sfogliatrice --json isDraft -q .isDraft 2>/dev/null | grep -q false; then
+            echo "Release v${VERSION} already published. Bump version in Cargo.toml first."
+            exit 1
+          fi
+
+          # Reuse existing draft if present (retry of failed run), otherwise create one
+          if gh release view "v${VERSION}" --repo racum/sfogliatrice > /dev/null 2>&1; then
+            echo "Draft v${VERSION} exists from previous run — reusing."
+          else
+            gh release create "v${VERSION}" --draft --title "v${VERSION}" --generate-notes
+          fi
+
+  # ── macOS builds ──────────────────────────────────────────────────────────
+
+  build-macos-x86:
+    needs: check-version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - run: cargo build --release -p sfogliatrice --target x86_64-apple-darwin
+      - uses: actions/upload-artifact@v5
+        with:
+          name: sfogliatrice-x86_64-apple-darwin
+          path: target/x86_64-apple-darwin/release/sfogliatrice
+
+  build-macos-arm64:
+    needs: check-version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - run: cargo build --release -p sfogliatrice --target aarch64-apple-darwin
+      - uses: actions/upload-artifact@v5
+        with:
+          name: sfogliatrice-aarch64-apple-darwin
+          path: target/aarch64-apple-darwin/release/sfogliatrice
+
+  build-macos-universal:
+    needs: [check-version, build-macos-x86, build-macos-arm64]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: sfogliatrice-x86_64-apple-darwin
+          path: x86_64
+      - uses: actions/download-artifact@v5
+        with:
+          name: sfogliatrice-aarch64-apple-darwin
+          path: arm64
+      - name: Create universal binary
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          lipo -create -output sfogliatrice x86_64/sfogliatrice arm64/sfogliatrice
+          chmod +x sfogliatrice
+          tar czf sfogliatrice-macos-v${VERSION}.tar.gz sfogliatrice
+      - name: Upload to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          gh release upload "v${VERSION}" sfogliatrice-macos-v${VERSION}.tar.gz --repo racum/sfogliatrice --clobber
+
+  # ── Linux builds ──────────────────────────────────────────────────────────
+
+  build-linux-amd64:
+    needs: check-version
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-C target-feature=+crt-static"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: cargo-bins/cargo-binstall@main
+      - run: cargo binstall --no-confirm cargo-deb
+      - run: cargo build --release -p sfogliatrice --target x86_64-unknown-linux-musl
+      - run: cargo deb --no-build -p sfogliatrice --target x86_64-unknown-linux-musl
+      - name: Upload .deb and raw static binary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          DEB=$(find target -name "sfogliatrice_*_amd64.deb" | head -1)
+          echo "Found deb at: $DEB"
+          cp "$DEB" "sfogliatrice_${VERSION}_amd64.deb"
+          gh release upload "v${VERSION}" "sfogliatrice_${VERSION}_amd64.deb" --clobber
+
+          tar czf sfogliatrice-linux-x86_64.tar.gz \
+            -C target/x86_64-unknown-linux-musl/release sfogliatrice
+          gh release upload "v${VERSION}" sfogliatrice-linux-x86_64.tar.gz --clobber
+      - uses: actions/upload-artifact@v5
+        with:
+          name: deb-amd64
+          path: sfogliatrice_*_amd64.deb
+
+  build-linux-arm64:
+    needs: check-version
+    runs-on: ubuntu-24.04-arm
+    env:
+      RUSTFLAGS: "-C target-feature=+crt-static"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: cargo-bins/cargo-binstall@main
+      - run: cargo binstall --no-confirm cargo-deb
+      - run: cargo build --release -p sfogliatrice --target aarch64-unknown-linux-musl
+      - run: cargo deb --no-build -p sfogliatrice --target aarch64-unknown-linux-musl
+      - name: Upload .deb and raw static binary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          DEB=$(find target -name "sfogliatrice_*_arm64.deb" | head -1)
+          echo "Found deb at: $DEB"
+          cp "$DEB" "sfogliatrice_${VERSION}_arm64.deb"
+          gh release upload "v${VERSION}" "sfogliatrice_${VERSION}_arm64.deb" --clobber
+
+          tar czf sfogliatrice-linux-aarch64.tar.gz \
+            -C target/aarch64-unknown-linux-musl/release sfogliatrice
+          gh release upload "v${VERSION}" sfogliatrice-linux-aarch64.tar.gz --clobber
+      - uses: actions/upload-artifact@v5
+        with:
+          name: deb-arm64
+          path: sfogliatrice_*_arm64.deb
+
+  # ── Windows builds ────────────────────────────────────────────────────────
+
+  build-windows-x86_64:
+    needs: check-version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: cargo build --release -p sfogliatrice --target x86_64-pc-windows-msvc
+      - name: Zip exe
+        shell: pwsh
+        run: Compress-Archive -Path target/x86_64-pc-windows-msvc/release/sfogliatrice.exe -DestinationPath sfogliatrice-windows-x86_64.zip
+      - name: Upload to GitHub Release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: gh release upload "v$env:VERSION" sfogliatrice-windows-x86_64.zip --clobber
+
+  build-windows-arm64:
+    needs: check-version
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - run: cargo build --release -p sfogliatrice --target aarch64-pc-windows-msvc
+      - name: Zip exe
+        shell: pwsh
+        run: Compress-Archive -Path target/aarch64-pc-windows-msvc/release/sfogliatrice.exe -DestinationPath sfogliatrice-windows-aarch64.zip
+      - name: Upload to GitHub Release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: gh release upload "v$env:VERSION" sfogliatrice-windows-aarch64.zip --clobber
+
+  # ── APT repo update ───────────────────────────────────────────────────────
+
+  update-apt-repo:
+    needs: [check-version, build-linux-amd64, build-linux-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout racum/apt
+        uses: actions/checkout@v5
+        with:
+          repository: racum/apt
+          token: ${{ secrets.APT_REPO_TOKEN }}
+          path: apt-repo
+      - uses: actions/download-artifact@v5
+        with:
+          name: deb-amd64
+          path: debs
+      - uses: actions/download-artifact@v5
+        with:
+          name: deb-arm64
+          path: debs
+      - name: Import GPG key
+        run: echo "${{ secrets.APT_SIGNING_KEY }}" | gpg --batch --import
+      - name: Update APT repo
+        env:
+          APT_SIGNING_KEY_ID: ${{ secrets.APT_SIGNING_KEY_ID }}
+        run: |
+          sudo apt-get install -y apt-utils
+          cp debs/*_amd64.deb apt-repo/pool/main/amd64/
+          cp debs/*_arm64.deb apt-repo/pool/main/arm64/
+          cd apt-repo
+          bash scripts/update-apt-repo.sh
+      - name: Commit and push
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          cd apt-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "sfogliatrice v${VERSION}"
+          git push
+
+  # ── Homebrew formula update ───────────────────────────────────────────────
+
+  update-homebrew:
+    needs: [check-version, build-macos-universal]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get SHA256 of universal binary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          gh release download "v${VERSION}" \
+            --repo racum/sfogliatrice \
+            --pattern "sfogliatrice-macos-v${VERSION}.tar.gz"
+          echo "SHA256=$(sha256sum sfogliatrice-macos-v${VERSION}.tar.gz | cut -d' ' -f1)" >> $GITHUB_ENV
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v5
+        with:
+          repository: racum/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+      - name: Update formula
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" homebrew-tap/Formula/sfogliatrice.rb
+          sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" homebrew-tap/Formula/sfogliatrice.rb
+      - name: Commit and push
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/sfogliatrice.rb
+          git commit -m "sfogliatrice v${VERSION}"
+          git push
+
+  # ── Scoop manifest update ─────────────────────────────────────────────────
+
+  update-scoop:
+    needs: [check-version, build-windows-x86_64, build-windows-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows zips and compute hashes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          gh release download "v${VERSION}" --repo racum/sfogliatrice \
+            --pattern "sfogliatrice-windows-x86_64.zip" \
+            --pattern "sfogliatrice-windows-aarch64.zip"
+          echo "SHA_X64=$(sha256sum sfogliatrice-windows-x86_64.zip | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "SHA_ARM=$(sha256sum sfogliatrice-windows-aarch64.zip | cut -d' ' -f1)" >> $GITHUB_ENV
+      - name: Checkout scoop-bucket
+        uses: actions/checkout@v5
+        with:
+          repository: racum/scoop-bucket
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          path: scoop-bucket
+      - name: Update manifest
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          cd scoop-bucket
+          jq --arg v "$VERSION" --arg x "$SHA_X64" --arg a "$SHA_ARM" \
+            '.version=$v
+            | .architecture."64bit".url="https://github.com/racum/sfogliatrice/releases/download/v\($v)/sfogliatrice-windows-x86_64.zip"
+            | .architecture."64bit".hash=$x
+            | .architecture.arm64.url="https://github.com/racum/sfogliatrice/releases/download/v\($v)/sfogliatrice-windows-aarch64.zip"
+            | .architecture.arm64.hash=$a' \
+            bucket/sfogliatrice.json > tmp && mv tmp bucket/sfogliatrice.json
+      - name: Commit and push
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          cd scoop-bucket
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bucket/sfogliatrice.json
+          git commit -m "sfogliatrice v${VERSION}"
+          git push
+
+  # ── Publish draft release ─────────────────────────────────────────────────
+
+  publish-release:
+    needs: [check-version, update-apt-repo, update-homebrew, update-scoop]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote draft to published
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          gh release edit "v${VERSION}" --repo racum/sfogliatrice --draft=false

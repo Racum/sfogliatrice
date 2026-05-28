@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.6.1] - 2026-05-28
+
+### Added
+
+- Distribution for macOS via Homebrew.
+- Distribution for Linux via APT and raw binaries.
+- Distribution for Windows via Scoop.
+
 ## [0.6.0] - 2026-04-30
 
 ### Added
