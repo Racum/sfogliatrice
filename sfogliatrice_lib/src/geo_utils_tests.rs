@@ -320,7 +320,8 @@ fn test_furthest_from_centroid() {
         [point_distance.point.x(), point_distance.point.y()],
         [-19256.33875833291, 5999.127809052266]
     );
-    assert_eq!(point_distance.distance, 20169.175816200113);
+    // Tolerance: the last bits of the distance vary across platforms and geo/libm versions.
+    assert!((point_distance.distance - 20169.175816200113).abs() < 1e-6);
 }
 
 #[test]
