@@ -113,6 +113,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: cargo-bins/cargo-binstall@main
       - run: cargo binstall --no-confirm cargo-deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: cargo build --release -p sfogliatrice --target x86_64-unknown-linux-musl
       - run: cargo deb --no-build -p sfogliatrice --target x86_64-unknown-linux-musl
       - name: Upload .deb and raw static binary
@@ -146,6 +148,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: cargo-bins/cargo-binstall@main
       - run: cargo binstall --no-confirm cargo-deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: cargo build --release -p sfogliatrice --target aarch64-unknown-linux-musl
       - run: cargo deb --no-build -p sfogliatrice --target aarch64-unknown-linux-musl
       - name: Upload .deb and raw static binary
