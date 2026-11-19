@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.6.2] - 2026-11-19
+
+### Changed
+
+- Updated `pyo3` and `pythonize` to 0.30 (fixes RUSTSEC-2026-0176 and RUSTSEC-2026-0177).
+- Updated dependencies.
+- Removed redundant `homepage` from the crate manifests.
+
 ## [0.6.1] - 2026-05-28
 
 ### Added

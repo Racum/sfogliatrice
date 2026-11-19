@@ -1,6 +1,6 @@
 [package]
 name = "sfogliatrice_lib"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 authors = ["Ronaldo Ferreira <ronaldo@racum.com>"]
 license = "MIT"
@@ -8,7 +8,6 @@ description = "Tessellation of GeoJSON geometries into satellite survey targets 
 readme = "../README.md"
 keywords = ["geo", "geojson", "tessellation", "satellite"]
 categories = ["science", "aerospace"]
-homepage = "https://github.com/racum/sfogliatrice"
 repository = "https://github.com/racum/sfogliatrice"
 
 [features]
